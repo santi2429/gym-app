@@ -1,4 +1,4 @@
-const CACHE = 'gym-v2';
+const CACHE = 'gym-v3';
 const FILES = ['./', './index.html', './styles.css', './manifest.webmanifest',
   './data.js', './store.js', './engine.js', './ui.js', './screens.js', './workout.js', './more.js', './app.js',
   './icon.svg', './icon-180.png', './icon-192.png', './icon-512.png'];

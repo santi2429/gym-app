@@ -109,27 +109,28 @@ SCREENS.inicio = {
       const nx = nextPlan(p);
       hero = `<div class="card soft"><div class="row"><i class="ti ${trainedToday ? 'ti-circle-check' : 'ti-zzz'} ac" style="font-size:28px"></i><div class="f1"><div class="b">${trainedToday ? 'Entreno de hoy completado' : 'Día de descanso'}</div><div class="mu">${trainedToday ? 'Buen trabajo. Recupera bien.' : T.rest}</div></div></div>${nx ? `<div class="li" style="margin-top:8px;border-top:.5px solid var(--ac-line)"><span class="mu f1">Próximo: <b style="color:var(--tx)">${esc(nx.day.name)}</b></span><span class="mu">${nx.inDays === 1 ? 'mañana' : DOW_L[nx.day.wd].toLowerCase()}</span></div>` : ''}<button class="btn out blk sm" id="extra" style="margin-top:8px">Entrenar igual hoy</button></div>`;
     }
-    const lastPr = [...p.history].reverse().find(h => h.prs && h.prs.length);
+    const sleepTxt = sleepT ? Math.floor(sleepT) + 'h' + (Math.round(sleepT % 1 * 60) ? String(Math.round(sleepT % 1 * 60)).padStart(2, '0') : '') : '—';
+    const stat = (v, l, go) => `<div ${go ? `data-go="${go}"` : ''} style="text-align:center;cursor:pointer"><div style="font-size:19px;font-weight:700">${v}</div><div class="mu sm">${l}</div></div>`;
     return `
-    <div class="row" style="margin-bottom:16px"><div class="avatar" data-go="perfil">${esc(p.name[0].toUpperCase())}</div><div class="f1"><div class="mu sm">${niceDate(today())}</div><h1 style="font-size:21px">${esc(greeting(p))}</h1><div class="mu">${esc(sub)}</div></div><button class="btn ghost" data-go="config" aria-label="Configuración"><i class="ti ti-settings" style="font-size:22px"></i></button></div>
-    <div class="card" data-go="logros"><div class="row sb" style="margin-bottom:7px"><span class="b"><i class="ti ti-shield-half ac"></i> Nivel ${L.level} · ${L.name}</span><span class="mu sm">${fmt0(L.cur)} / ${fmt0(L.need)} XP</span></div><div class="bar"><div style="width:${L.cur / L.need * 100}%"></div></div><div class="mu sm" style="margin-top:6px">Te faltan ${fmt0(L.need - L.cur)} XP para ${L.next}</div></div>
-    <div class="card row" style="gap:14px"><svg width="78" height="78" viewBox="0 0 76 76"><circle cx="38" cy="38" r="31" fill="none" stroke="var(--line)" stroke-width="9"/><circle cx="38" cy="38" r="31" fill="none" stroke="var(--ac)" stroke-width="9" stroke-linecap="round" stroke-dasharray="${C * ring} ${C}" transform="rotate(-90 38 38)"/><text x="38" y="43" text-anchor="middle" fill="var(--tx)" font-size="16" font-weight="700">${done}/${planned}</text></svg>
-      <div class="f1"><div class="b">${done >= planned ? T.done : done === 0 ? 'Semana nueva, a empezar' : done >= planned / 2 ? T.half : 'Vas ' + done + ' de ' + planned + ' esta semana'}</div><div class="mu" style="margin-top:3px">${st ? `Racha de ${st} día${st > 1 ? 's' : ''} <i class="ti ti-flame ac"></i> · ${T.streak}` : 'Entrena hoy para empezar tu racha'}</div></div></div>
-    <div class="card soft"><div class="mu sm" style="color:var(--ac-text);margin-bottom:5px"><i class="ti ti-sparkles"></i> Tu frase de hoy</div><div class="quote" id="quote">${esc(quoteOfDay(p))}</div><button class="btn ghost sm" id="otra" style="padding:6px 0 0"><i class="ti ti-refresh"></i> Ver otra</button></div>
+    <div class="row sb" style="margin:4px 0 22px"><span class="mu sm">${niceDate(today())}</span><span class="row" style="gap:6px"><button class="btn ghost" data-go="config" aria-label="Configuración" style="padding:4px"><i class="ti ti-settings mu" style="font-size:21px"></i></button><div class="avatar" data-go="perfil" style="width:30px;height:30px;font-size:13px">${esc(p.name[0].toUpperCase())}</div></span></div>
+    <div class="quote" id="quote" style="font-size:24px;line-height:1.28;font-weight:700;margin-bottom:6px">“${esc(quoteOfDay(p))}”</div>
+    <button class="btn ghost sm mu" id="otra" style="padding:2px 0;margin-bottom:24px"><i class="ti ti-refresh"></i> otra</button>
     ${hero}
-    <div class="card row" id="reto"><i class="ti ${ch.i} ac" style="font-size:24px"></i><div class="f1"><div class="b">Reto del día</div><div class="mu">${esc(ch.n)}</div></div>${chDone ? '<span class="pill"><i class="ti ti-check"></i> +30 XP</span>' : ch.auto ? '<span class="mu sm" style="color:var(--ac-text)">+30 XP</span>' : '<button class="btn pri sm" id="retoOk">Hecho</button>'}</div>
-    <div class="grid2" style="margin-bottom:12px">
-      <div class="card" style="margin:0" id="agua"><div class="mu sm"><i class="ti ti-droplet ac"></i> Agua</div><div class="b" style="font-size:17px">${fmt(water * .25)} / ${p.settings.waterGoal} L</div><div class="bar" style="margin:7px 0 8px;height:6px"><div style="width:${Math.min(100, water / wg * 100)}%"></div></div><button class="btn sm blk" id="vaso"><i class="ti ti-plus"></i> Vaso</button></div>
-      <div class="card" style="margin:0" data-go="bienestar"><div class="mu sm"><i class="ti ti-moon ac"></i> Sueño</div><div class="b" style="font-size:17px">${sleepT ? Math.floor(sleepT) + ' h ' + String(Math.round(sleepT % 1 * 60)).padStart(2, '0') : '—'}</div><div class="mu sm" style="margin:7px 0 8px">${sleepT ? 'Anoche' : 'Sin registrar'}</div><button class="btn sm blk" data-go="bienestar">${sleepT ? 'Ver' : 'Registrar'}</button></div>
+    <div class="row" style="justify-content:space-around;margin:20px 0 18px">
+      ${stat(done + '/' + planned, 'semana', 'rutina')}
+      ${stat(st + ' <i class="ti ti-flame ac" style="font-size:17px"></i>', st ? 'racha' : 'sin racha', 'logros')}
+      ${stat('Nv ' + L.level, Math.round(L.cur / L.need * 100) + ' %', 'logros')}
     </div>
-    ${lastPr ? `<div class="card row" data-go="progreso"><i class="ti ti-trophy ac" style="font-size:24px"></i><div class="f1"><div class="b">Último récord</div><div class="mu">${esc(EXD[lastPr.prs[0].ex].n)} · ${fmt(lastPr.prs[0].w)} ${unitW(p)} × ${lastPr.prs[0].r}</div></div><span class="mu sm">${shortDate(lastPr.date)}</span></div>` : ''}
+    <div class="row sb" style="border:.5px solid var(--line);border-radius:12px;padding:10px 12px;gap:10px">
+      <span class="row f1" style="gap:7px;min-width:0" id="reto"><i class="ti ${ch.i} ac" style="font-size:19px"></i><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;${chDone ? 'text-decoration:line-through;opacity:.6' : ''}">${esc(ch.n)}</span>${chDone || ch.auto ? '' : '<button class="btn ghost sm" id="retoOk" aria-label="Reto hecho" style="padding:2px"><i class="ti ti-circle-check ac" style="font-size:20px"></i></button>'}</span>
+      <span class="mu sm row" data-go="bienestar" style="gap:8px;cursor:pointer;white-space:nowrap"><span><i class="ti ti-droplet"></i> ${fmt(water * .25)}/${p.settings.waterGoal}</span><span><i class="ti ti-moon"></i> ${sleepTxt}</span></span>
+    </div>
     `;
   },
   mount(root, p) {
-    let off = 0; $('#otra', root).onclick = () => { off++; const q = $('#quote', root); q.textContent = quoteOfDay(p, off); q.classList.remove('pop'); void q.offsetWidth; q.classList.add('pop'); };
+    let off = 0; $('#otra', root).onclick = () => { off++; const q = $('#quote', root); q.textContent = '“' + quoteOfDay(p, off) + '”'; q.classList.remove('pop'); void q.offsetWidth; q.classList.add('pop'); };
     const start = $('#start', root); if (start) start.onclick = e => { unlockAudio(); const r = e.target.getBoundingClientRect(); confetti(16, { x: r.left + r.width / 2, y: r.top }); setTimeout(() => startWorkout(todayPlan(p).idx), 350); };
     const extra = $('#extra', root); if (extra) extra.onclick = () => pickDaySheet(p);
-    $('#vaso', root).onclick = e => { e.stopPropagation(); addWater(p, 1); render(); };
     const ok = $('#retoOk', root); if (ok) ok.onclick = () => { p.challenges[today()] = true; addXP(p, 30); Store.save(); confetti(14); toast('Reto cumplido · +30 XP'); render(); };
     checkAutoChallenge(p);
   }

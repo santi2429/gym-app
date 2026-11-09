@@ -8,6 +8,12 @@ const LIE = { anc: ['sh', 70, 104], base: { t: 270, F1: [30, 56] }, fl: ['an1'] 
 const KNEEL = { F1: [-37, 38], ft1: -100 };
 const PUSHUP = { anc: ['an1', 30, 146], fl: ['h1'], base: { ft1: 20 }, A: { t: 114, F1: [-68, 30], H1: [0, 50] }, B: { t: 97, F1: [-74, 9], H1: [-9, 15] } };
 
+// Ejercicios donde ir de A a B es la fase de esfuerzo (concéntrica): se hace más rápido que la vuelta.
+const ANIM_UP = new Set(['aperturas_polea', 'pec_deck', 'jalon_pecho', 'dominadas', 'remo_pecho_apoyado', 'remo_polea', 'remo_barra', 'remo_mancuerna',
+  'remo_maquina', 'pullover_polea', 'remo_invertido', 'remo_toalla', 'elev_lat', 'elev_lat_polea', 'face_pull', 'pajaros', 'curl_barra', 'curl_martillo',
+  'curl_inclinado', 'curl_bayesian', 'curl_predicador', 'ext_tricep_cabeza', 'ext_tricep_polea_alta', 'jalon_triceps', 'step_up', 'ext_cuadriceps',
+  'curl_femoral_sentado', 'curl_femoral_acostado', 'hip_thrust', 'puente_gluteo', 'puente_una_pierna', 'abduccion_maq', 'patada_gluteo', 'gemelo_pie',
+  'gemelo_prensa', 'crunch_polea', 'crunch', 'elev_piernas']);
 const ANIMS = {
   _default: { base: STAND, A: {}, B: { t: 178 } },
 
@@ -80,7 +86,7 @@ const ANIMS = {
   flexiones_diamante: { ...PUSHUP },
 
   // ---------- CUÁDRICEPS ----------
-  sentadilla: { A: { t: 180, F1: [0, 75], H1: [-10, 8] }, B: { t: 138, F1: [19, 35], H1: [-10, 8] }, eq: [['bbk', 'sh', -8, -2]] },
+  sentadilla: { rel: 1, base: { H1: [-19, -10], eb: -1 }, A: { t: 178, F1: [2, 75] }, B: { t: 136, F1: [21, 34] }, eq: [['bbk', 'h1', -3, -2, 15]] },
   sentadilla_goblet: { A: { t: 180, F1: [0, 75], H1: [12, 14] }, B: { t: 150, F1: [19, 35], H1: [14, 16] }, eq: [['db', 'h1']] },
   sentadilla_corporal: { A: { t: 180, F1: [0, 75], H1: [4, 51] }, B: { t: 145, F1: [19, 35], H1: [50, 4] } },
   sentadilla_hack: { anc: ['an1', 110, 160], base: { t: 200, H1: [4, -8] }, A: { F1: [26, 70] }, B: { F1: [42, 22] },

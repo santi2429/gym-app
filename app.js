@@ -31,6 +31,8 @@ document.addEventListener('click', e => {
 
 (function init() {
   Store.load();
+  Object.values(Store.db.profiles || {}).forEach(normalizePlan);
+  if (Store.p) Store.save();
   applyTheme(Store.p);
   if (!Store.p) { obReset(); go('onboarding'); }
   else if (Store.p.live) { CUR = { name: 'inicio', params: {} }; render(); }

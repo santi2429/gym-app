@@ -189,7 +189,7 @@ SCREENS.dia = {
     const d = p.plan.days[a.i]; const dl = isDeload(p);
     return `<div class="top"><button class="btn ghost" data-go="rutina"><i class="ti ti-arrow-left"></i></button><h2 style="margin:0" class="f1">${esc(d.name)}</h2><span class="mu">${DOW_L[d.wd]}</span></div>
     <p class="mu" style="margin-bottom:12px">${d.ex.length} ejercicios · ${estMinutes(d)} min${dl ? ' · <span class="ac">descarga</span>' : ''}</p>
-    <div class="card" style="padding:4px 14px">${d.ex.map((e, j) => { const x = EXD[e.id]; return `<div class="li" data-ex="${j}" style="cursor:pointer"><span class="ac b" style="width:20px">${j + 1}</span><div class="f1"><div>${esc(x.n)}</div><div class="mu sm">${dl ? Math.max(2, e.sets - 1) : e.sets} × ${e.lo}-${e.hi} · descanso ${e.rest >= 120 ? e.rest / 60 + ' min' : e.rest + ' s'}</div></div><i class="ti ti-info-circle chev"></i></div>`; }).join('')}</div>
+    <div class="card" style="padding:4px 14px">${d.ex.map((e, j) => { const x = EXD[e.id]; return `<div class="li" data-ex="${j}" style="cursor:pointer"><span class="ac b" style="width:20px">${j + 1}</span><div class="f1"><div>${esc(x.n)}</div><div class="mu sm">${fmtTarget(e, dl ? Math.max(2, e.sets - 1) : e.sets)} · descanso ${e.rest >= 120 ? e.rest / 60 + ' min' : e.rest + ' s'}</div></div><i class="ti ti-info-circle chev"></i></div>`; }).join('')}</div>
     <div class="card"><div class="b" style="margin-bottom:4px">Calentamiento</div>${warmup(d).map(w => `<div class="li"><i class="ti ${w[0]}"></i><span class="f1">${esc(w[1])}</span><span class="mu sm">${w[2]}</span></div>`).join('')}</div>
     <button class="btn pri blk" id="start"><i class="ti ti-player-play"></i> Empezar este entreno</button>`;
   },
@@ -292,17 +292,17 @@ SCREENS.editar_dia = {
     return `<div class="top"><button class="btn ghost" data-go="perfil"><i class="ti ti-arrow-left"></i></button><h2 style="margin:0" class="f1">${esc(d.name)}</h2><span class="mu">${DOW_L[d.wd]}</span></div>
     <p class="mu" style="margin-bottom:12px">Cambia ejercicios, series o repeticiones. Los cambios se guardan solos.</p>
     ${d.ex.map((e, j) => { const x = EXD[e.id]; return `<div class="card"><div class="row"><span class="ac b">${j + 1}</span><div class="f1 b">${esc(x.n)}</div><button class="btn ghost" data-swap="${j}" aria-label="Cambiar"><i class="ti ti-arrows-exchange"></i></button><button class="btn ghost" data-del="${j}" aria-label="Quitar"><i class="ti ti-trash"></i></button></div>
-      <div class="grid3" style="margin-top:8px"><label class="mu sm">Series<input type="number" min="1" max="8" value="${e.sets}" data-f="sets" data-j="${j}"></label><label class="mu sm">Reps mín<input type="number" min="1" max="50" value="${e.lo}" data-f="lo" data-j="${j}"></label><label class="mu sm">Reps máx<input type="number" min="1" max="60" value="${e.hi}" data-f="hi" data-j="${j}"></label></div></div>`; }).join('')}
+      <div class="grid3" style="margin-top:8px"><label class="mu sm">Series<input type="number" min="1" max="8" value="${e.sets}" data-f="sets" data-j="${j}"></label><label class="mu sm">${exMode(e.id) === 't' ? 'Seg. mín' : 'Reps mín'}<input type="number" min="1" max="300" value="${e.lo}" data-f="lo" data-j="${j}"></label><label class="mu sm">${exMode(e.id) === 't' ? 'Seg. máx' : 'Reps máx'}<input type="number" min="1" max="300" value="${e.hi}" data-f="hi" data-j="${j}"></label></div></div>`; }).join('')}
     <button class="btn out blk" id="add"><i class="ti ti-plus"></i> Agregar ejercicio</button>`;
   },
   mount(root, p, a) {
     const d = p.plan.days[a.i];
     $$('[data-f]', root).forEach(i => i.onchange = () => { const v = Math.max(1, +i.value || 1); d.ex[+i.dataset.j][i.dataset.f] = v; Store.save(); toast('Guardado', 1000); });
     $$('[data-del]', root).forEach(b => b.onclick = () => { if (d.ex.length <= 1) return toast('Deja al menos un ejercicio'); d.ex.splice(+b.dataset.del, 1); Store.save(); render(); });
-    $$('[data-swap]', root).forEach(b => b.onclick = () => swapSheet(p, d.ex[+b.dataset.swap].id, id => { d.ex[+b.dataset.swap].id = id; Store.save(); render(); }));
+    $$('[data-swap]', root).forEach(b => b.onclick = () => swapSheet(p, d.ex[+b.dataset.swap].id, id => { retarget(p, d.ex[+b.dataset.swap], id); Store.save(); render(); }));
     $('#add', root).onclick = () => {
       sheet(`<h2>Agregar ejercicio</h2>${Object.entries(GROUP_NAMES).map(([g, n]) => `<div class="sec">${n}</div>` + EX.filter(x => x.g === g && x.e.includes(p.place)).map(x => `<div class="li" data-id="${x.id}" style="cursor:pointer"><span class="f1">${esc(x.n)}</span>${x.t === 3 ? '<i class="ti ti-star ac" title="De los más efectivos"></i>' : ''}</div>`).join('')).join('')}`, (el, close) => {
-        $$('[data-id]', el).forEach(r => r.onclick = () => { const x = EXD[r.dataset.id]; const pr = params(p.goal, x.k, p.level, false); d.ex.push({ id: x.id, sets: pr.sets, lo: pr.lo, hi: pr.hi, rest: pr.rest }); Store.save(); close(); render(); });
+        $$('[data-id]', el).forEach(r => r.onclick = () => { const x = EXD[r.dataset.id]; const pr = exTarget(x.id, p.level, params(p.goal, x.k, p.level, false)); d.ex.push({ id: x.id, sets: pr.sets, lo: pr.lo, hi: pr.hi, rest: pr.rest }); Store.save(); close(); render(); });
       });
     };
   }

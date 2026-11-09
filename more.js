@@ -11,12 +11,12 @@ SCREENS.progreso = {
       if (!exs.length) body = '<div class="card mu center" style="padding:30px 14px">Completa tu primer entreno y aquí verás cómo sube tu fuerza.</div>';
       else {
         const pts = p.history.filter(h => h.sets.some(s => s.ex === sel)).map(h => { const ss = h.sets.filter(s => s.ex === sel); const best = Math.max(...ss.map(s => s.w ? e1rm(s.w, s.r) : s.r)); return { x: shortDate(h.date), y: best }; });
-        const first = pts[0].y, lastv = pts[pts.length - 1].y, isBW = !p.history.some(h => h.sets.some(s => s.ex === sel && s.w));
+        const first = pts[0].y, lastv = pts[pts.length - 1].y, isBW = !p.history.some(h => h.sets.some(s => s.ex === sel && s.w)), isT = exMode(sel) === 't';
         body = `<div class="card"><select id="exSel" style="margin-bottom:10px">${exs.map(e => `<option value="${e}" ${e === sel ? 'selected' : ''}>${esc(EXD[e].n)}</option>`).join('')}</select>
-          <div class="row sb"><span class="mu sm">${isBW ? 'Mejores repeticiones' : 'Fuerza estimada (1RM)'}</span><span class="ac b sm">${lastv >= first ? '+' : ''}${fmt(lastv - first)} ${isBW ? 'reps' : u}</span></div>${lineChart(pts, { fmt: v => fmt(v) + (isBW ? '' : ' ' + u) })}</div>`;
+          <div class="row sb"><span class="mu sm">${isT ? 'Mejor tiempo' : isBW ? 'Mejores repeticiones' : 'Fuerza estimada (1RM)'}</span><span class="ac b sm">${lastv >= first ? '+' : ''}${fmt(lastv - first)} ${isT ? 's' : isBW ? 'reps' : u}</span></div>${lineChart(pts, { fmt: v => fmt(v) + (isT ? ' s' : isBW ? '' : ' ' + u) })}</div>`;
       }
       const prs = Object.entries(p.prs).sort((x, y) => (y[1].w ? e1rm(y[1].w, y[1].r) : 0) - (x[1].w ? e1rm(x[1].w, x[1].r) : 0)).slice(0, 8);
-      body += `<div class="card"><div class="row sb" style="margin-bottom:4px"><span class="b">Récords personales</span><i class="ti ti-trophy ac"></i></div>${prs.map(([e, r]) => `<div class="li"><span class="f1">${esc(EXD[e].n)}</span><span class="b">${r.w ? fmt(r.w) + ' ' + u + ' × ' : ''}${r.r}${r.w ? '' : ' reps'}</span></div>`).join('') || '<p class="mu">Aún no hay récords.</p>'}</div>`;
+      body += `<div class="card"><div class="row sb" style="margin-bottom:4px"><span class="b">Récords personales</span><i class="ti ti-trophy ac"></i></div>${prs.map(([e, r]) => `<div class="li"><span class="f1">${esc(EXD[e].n)}</span><span class="b">${r.w ? fmt(r.w) + ' ' + u + ' × ' : ''}${r.r}${r.w ? '' : exMode(e) === 't' ? ' s' : ' reps'}</span></div>`).join('') || '<p class="mu">Aún no hay récords.</p>'}</div>`;
       body += monthSummary(p);
     } else if (tab === 'peso') {
       const pts = p.body.filter(b => b.weight).map(b => ({ x: shortDate(b.date), y: b.weight }));

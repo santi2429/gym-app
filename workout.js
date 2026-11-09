@@ -1,12 +1,14 @@
 // ====== Entrenamiento en vivo y resumen ======
-// p.live = { id, dayIdx, start(ms), cur, items:[{id, sets, lo, hi, rest, sug, rows:[{w,r,done}]}], restEnd(ms)|null, restTotal, warned }
+// p.live = { id, dayIdx, start(ms), cur (-1 = calentamiento), wu:[bool], items:[{id, sets, lo, hi, rest, sug, rows:[{w,r,done}]}],
+//            restEnd(ms)|null, restTotal, warned, holdEnd(ms)|null, holdRow }
+// Tipo de registro por ejercicio (exMode): 'w' peso × reps · 'b' peso corporal (reps + peso extra opcional) · 't' segundos
 function startWorkout(dayIdx) {
   const p = Store.p;
   if (p.live && p.live.dayIdx !== dayIdx) return confirmSheet('Tienes un entreno en curso', '¿Lo descartas y empiezas este?', 'Descartar y empezar', () => { p.live = null; startWorkout(dayIdx); }, true);
   if (!p.live) {
     const day = p.plan.days[dayIdx], dl = isDeload(p);
     p.live = {
-      id: 'w' + Date.now().toString(36), dayIdx, start: Date.now(), cur: 0, restEnd: null, restTotal: 0,
+      id: 'w' + Date.now().toString(36), dayIdx, start: Date.now(), cur: -1, wu: [], restEnd: null, restTotal: 0, holdEnd: null,
       items: day.ex.map(e => {
         const sets = dl ? Math.max(2, e.sets - 1) : e.sets;
         const s = suggest(p, Object.assign({}, e, { sets }));
@@ -18,94 +20,163 @@ function startWorkout(dayIdx) {
   if (p.settings.wake) keepAwake(true);
   go('entreno');
 }
+const WARMUP_SEC = 240;
+function lastText(p, id, last) {
+  const m = exMode(id), u = unitW(p);
+  if (m === 't') return last.sets.map(s => s.r + ' s').join(', ');
+  if (m === 'b') return last.sets.map(s => s.r + (+s.w ? ' (+' + fmt(s.w) + ')' : '')).join(', ') + ' reps';
+  return last.sets.map(s => (+s.w ? fmt(s.w) + ' × ' : '') + s.r).join(', ') + (+last.sets[0].w ? ' ' + u : '');
+}
 
 let _tick = null;
 SCREENS.entreno = {
   full: true,
   html(p) {
     const L = p.live; if (!L) return '';
-    const it = L.items[L.cur], x = EXD[it.id], last = lastSessionFor(p, it.id), u = unitW(p);
-    const elapsed = Math.floor((Date.now() - L.start) / 60000);
-    const isLast = L.cur === L.items.length - 1;
-    return `<div class="top"><button class="btn ghost" id="quit" aria-label="Salir"><i class="ti ti-x"></i></button><div class="f1 center mu">Ejercicio ${L.cur + 1} de ${L.items.length} · <span id="el">${elapsed} min</span></div><button class="btn ghost" id="list" aria-label="Lista"><i class="ti ti-list"></i></button></div>
-    <div class="prog" style="margin-bottom:14px"><div style="width:${(L.cur + 1) / L.items.length * 100}%"></div></div>
+    if (L.cur == null) L.cur = 0;
+    const n = L.items.length, elapsed = Math.floor((Date.now() - L.start) / 60000);
+    const head = label => `<div class="top"><button class="btn ghost" id="quit" aria-label="Salir"><i class="ti ti-x"></i></button><div class="f1 center mu">${label} · <span id="el">${elapsed} min</span></div><button class="btn ghost" id="list" aria-label="Lista"><i class="ti ti-list"></i></button></div>
+      <div class="prog" style="margin-bottom:14px"><div style="width:${(L.cur + 1) / (n + 1) * 100 + 100 / (n + 1)}%"></div></div>`;
+    const timerCard = (label, sec) => `<div class="card center" id="restBox"><div class="mu sm">${label}</div><div class="timer" id="tm">${fmtT(sec)}</div><div class="row" style="justify-content:center;gap:8px;margin-top:4px"><button class="btn sm" id="m15">−15 s</button><button class="btn sm" id="restBtn">Iniciar</button><button class="btn sm" id="p15">+15 s</button></div></div>`;
+
+    // ---- Paso 0: calentamiento ----
+    if (L.cur === -1) {
+      const day = p.plan.days[L.dayIdx], wu = warmup(day), wd = L.wu || [];
+      return head('Calentamiento') + `<h1 style="font-size:22px">Calentamiento</h1>
+      <p class="mu" style="margin-bottom:10px">Unos 8 minutos para preparar el cuerpo para ${esc(day.name.toLowerCase())}. Marca cada uno al terminarlo.</p>
+      <div class="card" style="padding:4px 14px">${wu.map((w, i) => `<div class="li" data-wu="${i}" style="cursor:pointer;gap:10px"><i class="ti ${w[0]} ac" style="font-size:20px"></i><span class="f1" style="${wd[i] ? 'opacity:.55;text-decoration:line-through' : ''}">${esc(w[1])}</span><span class="mu sm">${w[2]}</span><div class="ck ${wd[i] ? 'on' : ''}"><i class="ti ti-check"></i></div></div>`).join('')}</div>
+      ${timerCard('Cronómetro para el cardio', WARMUP_SEC)}
+      <button class="btn pri blk" id="next">Empezar ejercicios <i class="ti ti-arrow-right"></i></button>`;
+    }
+
+    // ---- Ejercicios ----
+    const it = L.items[L.cur], x = EXD[it.id], last = lastSessionFor(p, it.id), u = unitW(p), m = exMode(it.id);
+    const isLast = L.cur === n - 1;
+    const cols = m === 't' ? '34px 1fr 40px' : '34px 1fr 1fr 40px';
+    const hdr = m === 't' ? '<span class="center">Segundos</span>' : m === 'b' ? `<span class="center">Peso extra</span><span class="center">Reps</span>` : `<span class="center">${u === 'lb' ? 'Libras' : 'Kilos'}</span><span class="center">Reps</span>`;
+    const row = (r, j) => `<div class="sr" style="grid-template-columns:${cols}"><span class="ac b">${j + 1}</span>`
+      + (m === 't' ? `<input type="number" inputmode="numeric" value="${r.r}" data-r="${j}" aria-label="Segundos">`
+        : `<input type="number" inputmode="decimal" step="0.5" value="${r.w}" placeholder="${m === 'b' ? 'opcional' : (x.e === 'b' || p.place === 'b' ? 'peso corp.' : '0')}" data-w="${j}"><input type="number" inputmode="numeric" value="${r.r}" data-r="${j}">`)
+      + `<div class="ck ${r.done ? 'on' : ''}" data-ck="${j}" role="button" aria-label="Serie hecha"><i class="ti ti-check"></i></div></div>`;
+    const nextRow = it.rows.findIndex(r => !r.done), holdT = nextRow >= 0 ? (+it.rows[nextRow].r || it.lo) : it.lo;
+    return head(`Ejercicio ${L.cur + 1} de ${n}`) + `
     <div class="vid" id="tec"><i class="ti ti-player-play"></i><span class="mu sm">Ver técnica</span></div>
     <h1 style="font-size:22px">${esc(x.n)}</h1>
-    <p class="mu" style="margin-bottom:10px">${it.sets} × ${it.lo}-${it.hi} reps · ${last ? 'Última vez: ' + last.sets.map(s => (+s.w ? fmt(s.w) + ' × ' : '') + s.r).join(', ') + (+last.sets[0].w ? ' ' + u : '') : 'Primera vez'}</p>
+    <p class="mu" style="margin-bottom:10px">${fmtTarget(it)}${m === 'b' ? ' · peso corporal' : ''} · ${last ? 'Última vez: ' + lastText(p, it.id, last) : 'Primera vez'}</p>
     <div class="card soft row" style="padding:11px 14px"><i class="ti ${it.sug.kind === 'up' ? 'ti-trending-up' : it.sug.kind === 'deload' ? 'ti-battery-charging' : it.sug.kind === 'new' ? 'ti-info-circle' : 'ti-target'} ac" style="font-size:20px"></i><span class="sm f1">${esc(it.sug.msg)}</span></div>
-    <div class="card sets" style="padding:6px 14px"><div class="sr mu sm"><span>Serie</span><span class="center">${u === 'lb' ? 'Libras' : 'Kilos'}</span><span class="center">Reps</span><span></span></div>
-      ${it.rows.map((r, j) => `<div class="sr"><span class="ac b">${j + 1}</span><input type="number" inputmode="decimal" step="0.5" value="${r.w}" placeholder="${x.e === 'b' || p.place === 'b' ? 'peso corp.' : '0'}" data-w="${j}"><input type="number" inputmode="numeric" value="${r.r}" data-r="${j}"><div class="ck ${r.done ? 'on' : ''}" data-ck="${j}" role="button" aria-label="Serie hecha"><i class="ti ti-check"></i></div></div>`).join('')}
+    ${m === 't' ? `<div class="card center" id="holdBox"><div class="mu sm">${nextRow >= 0 ? 'Serie ' + (nextRow + 1) + ': aguanta' : 'Todas las series hechas'}</div><div class="timer" id="hold">${fmtT(L.holdEnd ? (L.holdEnd - Date.now()) / 1000 : holdT)}</div>${nextRow >= 0 ? `<button class="btn pri sm" id="holdBtn" style="margin-top:6px">${L.holdEnd ? 'Parar y guardar' : '<i class="ti ti-player-play"></i> Empezar'}</button>` : ''}</div>` : ''}
+    <div class="card sets" style="padding:6px 14px"><div class="sr mu sm" style="grid-template-columns:${cols}"><span>Serie</span>${hdr}<span></span></div>
+      ${it.rows.map(row).join('')}
       <div class="row" style="justify-content:center;gap:16px;padding:6px 0"><button class="btn ghost sm" id="addset"><i class="ti ti-plus"></i> Serie</button>${it.rows.length > 1 ? '<button class="btn ghost sm" id="rmset"><i class="ti ti-minus"></i> Serie</button>' : ''}</div></div>
-    <div class="card center" id="restBox"><div class="mu sm">Descanso</div><div class="timer" id="tm">${fmtT(it.rest)}</div><div class="row" style="justify-content:center;gap:8px;margin-top:4px"><button class="btn sm" id="m15">−15 s</button><button class="btn sm" id="restBtn">Iniciar</button><button class="btn sm" id="p15">+15 s</button></div></div>
+    ${timerCard('Descanso', it.rest)}
     <div class="grid2"><button class="btn out" id="swap"><i class="ti ti-arrows-exchange"></i> Cambiar</button><button class="btn pri" id="next">${isLast ? 'Terminar <i class="ti ti-flag"></i>' : 'Siguiente <i class="ti ti-arrow-right"></i>'}</button></div>
-    ${L.cur > 0 ? '<button class="btn ghost blk" id="prev" style="margin-top:6px"><i class="ti ti-arrow-left"></i> Anterior</button>' : ''}`;
+    <button class="btn ghost blk" id="prev" style="margin-top:6px"><i class="ti ti-arrow-left"></i> ${L.cur === 0 ? 'Calentamiento' : 'Anterior'}</button>`;
   },
   mount(root, p) {
     const L = p.live; if (!L) return go('inicio');
-    const it = L.items[L.cur];
     if (p.settings.wake) keepAwake(true);
+    const it = L.cur >= 0 ? L.items[L.cur] : null;
+    const goTo = k => { L.cur = k; L.holdEnd = null; Store.save(); render(); window.scrollTo(0, 0); };
+
+    // Comunes: salir, lista, cronómetro de descanso
+    $('#quit', root).onclick = () => sheet(`<h2>¿Salir del entreno?</h2><p class="mu" style="margin-bottom:14px">Puedes pausarlo y continuarlo luego desde Inicio.</p><button class="btn pri blk" id="pause">Pausar y salir</button><button class="btn out blk" id="end" style="margin-top:8px">Terminar y guardar</button><button class="btn ghost blk" id="disc" style="margin-top:8px;color:var(--ac-text)">Descartar entreno</button>`, (el, close) => {
+      $('#pause', el).onclick = () => { close(); keepAwake(false); go('inicio'); };
+      $('#end', el).onclick = () => { close(); finishWorkout(); };
+      $('#disc', el).onclick = () => { close(); confirmSheet('¿Descartar el entreno?', 'No se guardará nada de esta sesión.', 'Descartar', () => { p.live = null; Store.save(); keepAwake(false); go('inicio'); }, true); };
+    });
+    $('#list', root).onclick = () => sheet(`<h2>Sesión de hoy</h2><div class="li" data-k="-1" style="cursor:pointer"><span class="ac b" style="width:20px"><i class="ti ti-flame"></i></span><span class="f1">Calentamiento</span>${(L.wu || []).filter(Boolean).length ? '<i class="ti ti-circle-check ac"></i>' : ''}</div>${L.items.map((i, k) => `<div class="li" data-k="${k}" style="cursor:pointer"><span class="ac b" style="width:20px">${k + 1}</span><span class="f1">${esc(EXD[i.id].n)}</span><span class="mu sm">${i.rows.filter(r => r.done).length}/${i.rows.length}</span>${i.rows.every(r => r.done) ? '<i class="ti ti-circle-check ac"></i>' : ''}</div>`).join('')}`, (el, close) => {
+      $$('[data-k]', el).forEach(r => r.onclick = () => { close(); goTo(+r.dataset.k); });
+    });
+    const base = () => it ? it.rest : WARMUP_SEC;
+    $('#restBtn', root).onclick = () => { unlockAudio(); if (L.restEnd) { L.restEnd = null; Store.save(); paintRest(); } else startRest(base()); };
+    $('#m15', root).onclick = () => { if (L.restEnd) L.restEnd -= 15000; else if (it) it.rest = Math.max(15, it.rest - 15); Store.save(); paintRest(); };
+    $('#p15', root).onclick = () => { if (L.restEnd) L.restEnd += 15000; else if (it) it.rest += 15; Store.save(); paintRest(); };
+    clearInterval(_tick); _tick = setInterval(tick, 250); paintRest();
+
+    // ---- Calentamiento ----
+    if (!it) {
+      L.wu = L.wu || [];
+      $$('[data-wu]', root).forEach(r => r.onclick = () => { const i = +r.dataset.wu; L.wu[i] = !L.wu[i]; if (L.wu[i] && p.settings.vibSet) vibrate(30); Store.save(); render(); });
+      $('#next', root).onclick = () => { L.restEnd = null; goTo(0); };
+      return;
+    }
+
+    // ---- Ejercicio ----
+    const m = exMode(it.id);
     $('#tec', root).onclick = () => exerciseInfo(it.id);
     $$('[data-w]', root).forEach(i => i.oninput = () => { const j = +i.dataset.w; it.rows[j].w = i.value; for (let k = j + 1; k < it.rows.length; k++) if (!it.rows[k].done) { it.rows[k].w = i.value; const o = $(`[data-w="${k}"]`, root); if (o) o.value = i.value; } Store.save(); });
-    $$('[data-r]', root).forEach(i => i.oninput = () => { it.rows[+i.dataset.r].r = i.value; Store.save(); });
-    $$('[data-ck]', root).forEach(c => c.onclick = () => {
-      unlockAudio();
-      const j = +c.dataset.ck, row = it.rows[j]; row.done = !row.done; c.classList.toggle('on', row.done);
-      if (row.done) {
-        if (!row.r) row.r = it.lo;
-        if (p.settings.vibSet) vibrate(40);
-        const allDone = it.rows.every(r => r.done);
-        if (p.settings.autoRest && !(allDone && L.cur === L.items.length - 1)) startRest(it.rest);
-        if (allDone) toast(L.cur === L.items.length - 1 ? 'Último ejercicio completado' : 'Ejercicio completado. Al terminar el descanso, pasa al siguiente.');
-      }
-      Store.save();
+    $$('[data-r]', root).forEach(i => i.oninput = () => {
+      const j = +i.dataset.r; it.rows[j].r = i.value; Store.save();
+      if (m === 't' && !L.holdEnd && j === it.rows.findIndex(r => !r.done)) { const h = $('#hold', root); if (h) h.textContent = fmtT(+i.value || it.lo); }
     });
+    $$('[data-ck]', root).forEach(c => c.onclick = () => { unlockAudio(); setDone(p, it, +c.dataset.ck, !it.rows[+c.dataset.ck].done); if (m === 't') render(); else c.classList.toggle('on', it.rows[+c.dataset.ck].done); });
+    const hb = $('#holdBtn', root);
+    if (hb) hb.onclick = () => {
+      unlockAudio();
+      const j = it.rows.findIndex(r => !r.done); if (j < 0) return;
+      if (L.holdEnd) { // parar antes: guarda los segundos aguantados
+        const held = Math.max(1, Math.round((+it.rows[j].r || it.lo) - (L.holdEnd - Date.now()) / 1000));
+        it.rows[j].r = held; L.holdEnd = null; setDone(p, it, j, true); render();
+      } else { L.restEnd = null; L.holdEnd = Date.now() + (+it.rows[j].r || it.lo) * 1000; L.holdRow = j; Store.save(); render(); }
+    };
     $('#addset', root).onclick = () => { const l = it.rows[it.rows.length - 1]; it.rows.push({ w: l.w, r: l.r, done: false }); Store.save(); render(); };
     const rm = $('#rmset', root); if (rm) rm.onclick = () => { it.rows.pop(); Store.save(); render(); };
-    $('#restBtn', root).onclick = () => { unlockAudio(); if (L.restEnd) { L.restEnd = null; Store.save(); paintRest(); } else startRest(it.rest); };
-    $('#m15', root).onclick = () => { if (L.restEnd) { L.restEnd -= 15000; } else { it.rest = Math.max(15, it.rest - 15); } Store.save(); paintRest(); };
-    $('#p15', root).onclick = () => { if (L.restEnd) { L.restEnd += 15000; } else { it.rest += 15; } Store.save(); paintRest(); };
     $('#swap', root).onclick = () => swapSheet(p, it.id, id => {
-      it.id = id; it.sug = suggest(p, Object.assign({}, it)); it.rows = it.rows.map(r => r.done ? r : { w: it.sug.w, r: it.sug.r, done: false });
-      Store.save(); render();
+      retarget(p, it, id); it.sug = suggest(p, Object.assign({}, it)); it.rows = it.rows.map(r => r.done ? r : { w: it.sug.w, r: it.sug.r, done: false });
+      L.holdEnd = null; Store.save(); render();
     });
     $('#next', root).onclick = () => {
-      if (L.cur < L.items.length - 1) { L.cur++; Store.save(); render(); window.scrollTo(0, 0); }
+      if (L.cur < L.items.length - 1) goTo(L.cur + 1);
       else {
         const pending = L.items.reduce((a, i) => a + i.rows.filter(r => !r.done).length, 0);
         if (pending) confirmSheet('¿Terminar el entreno?', 'Te quedan ' + pending + ' series sin marcar. Se guardan solo las que marcaste como hechas.', 'Terminar', finishWorkout);
         else finishWorkout();
       }
     };
-    const prev = $('#prev', root); if (prev) prev.onclick = () => { L.cur--; Store.save(); render(); };
-    $('#quit', root).onclick = () => sheet(`<h2>¿Salir del entreno?</h2><p class="mu" style="margin-bottom:14px">Puedes pausarlo y continuarlo luego desde Inicio.</p><button class="btn pri blk" id="pause">Pausar y salir</button><button class="btn out blk" id="end" style="margin-top:8px">Terminar y guardar</button><button class="btn ghost blk" id="disc" style="margin-top:8px;color:var(--ac-text)">Descartar entreno</button>`, (el, close) => {
-      $('#pause', el).onclick = () => { close(); keepAwake(false); go('inicio'); };
-      $('#end', el).onclick = () => { close(); finishWorkout(); };
-      $('#disc', el).onclick = () => { close(); confirmSheet('¿Descartar el entreno?', 'No se guardará nada de esta sesión.', 'Descartar', () => { p.live = null; Store.save(); keepAwake(false); go('inicio'); }, true); };
-    });
-    $('#list', root).onclick = () => sheet(`<h2>Ejercicios de hoy</h2>${L.items.map((i, k) => `<div class="li" data-k="${k}" style="cursor:pointer"><span class="ac b" style="width:20px">${k + 1}</span><span class="f1">${esc(EXD[i.id].n)}</span><span class="mu sm">${i.rows.filter(r => r.done).length}/${i.rows.length}</span>${i.rows.every(r => r.done) ? '<i class="ti ti-circle-check ac"></i>' : ''}</div>`).join('')}`, (el, close) => {
-      $$('[data-k]', el).forEach(r => r.onclick = () => { L.cur = +r.dataset.k; Store.save(); close(); render(); });
-    });
-    clearInterval(_tick); _tick = setInterval(tick, 250); paintRest();
+    $('#prev', root).onclick = () => goTo(L.cur - 1);
   }
 };
+// Marca o desmarca una serie y arranca el descanso
+function setDone(p, it, j, on) {
+  const L = p.live, row = it.rows[j]; row.done = on;
+  if (on) {
+    if (!row.r) row.r = it.lo;
+    if (p.settings.vibSet) vibrate(40);
+    const allDone = it.rows.every(r => r.done);
+    if (p.settings.autoRest && !(allDone && L.cur === L.items.length - 1)) startRest(it.rest);
+    if (allDone) toast(L.cur === L.items.length - 1 ? 'Último ejercicio completado' : 'Ejercicio completado. Al terminar el descanso, pasa al siguiente.');
+  }
+  Store.save();
+}
 function fmtT(s) { s = Math.max(0, Math.ceil(s)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
 function startRest(sec) { const L = Store.p.live; L.restEnd = Date.now() + sec * 1000; L.restTotal = sec; L.warned = false; Store.save(); paintRest(); }
 function paintRest() {
   const p = Store.p, L = p && p.live; const tm = $('#tm'), b = $('#restBtn'); if (!L || !tm) return;
   if (L.restEnd) { const left = (L.restEnd - Date.now()) / 1000; tm.textContent = fmtT(left); if (b) b.textContent = 'Saltar'; }
-  else { tm.textContent = fmtT(L.items[L.cur].rest); if (b) b.textContent = 'Iniciar'; }
+  else { tm.textContent = fmtT(L.cur >= 0 ? L.items[L.cur].rest : WARMUP_SEC); if (b) b.textContent = 'Iniciar'; }
 }
 function tick() {
   const p = Store.p, L = p && p.live;
   if (!L || CUR.name !== 'entreno') { clearInterval(_tick); return; }
   const el = $('#el'); if (el) el.textContent = Math.floor((Date.now() - L.start) / 60000) + ' min';
+  // Cronómetro de aguante (ejercicios por tiempo)
+  if (L.holdEnd) {
+    const left = (L.holdEnd - Date.now()) / 1000, h = $('#hold');
+    if (h) h.textContent = fmtT(left);
+    if (left <= 0) {
+      const it = L.items[L.cur], j = L.holdRow; L.holdEnd = null;
+      beep(); flash(); if (p.settings.vibRest) vibrate([200, 100, 200]);
+      if (it && it.rows[j] && !it.rows[j].done) setDone(p, it, j, true);
+      render(); return;
+    }
+  }
   if (L.restEnd) {
     const left = (L.restEnd - Date.now()) / 1000;
     if (left <= 10.2 && left > 9 && !L.warned) { L.warned = true; if (p.settings.warn10) { beep([[660, .12]]); if (p.settings.vibRest) vibrate(80); } }
     if (left <= 0) {
       L.restEnd = null; Store.save();
       beep(); flash(); if (p.settings.vibRest) vibrate([200, 100, 200, 100, 200]);
-      const tm = $('#tm'); if (tm) { tm.textContent = tone(p).restEnd; const rb = $('#restBox'); if (rb) { rb.classList.remove('pop'); void rb.offsetWidth; rb.classList.add('pop'); } }
+      const tm = $('#tm'); if (tm) { tm.textContent = L.cur >= 0 ? tone(p).restEnd : 'Listo'; const rb = $('#restBox'); if (rb) { rb.classList.remove('pop'); void rb.offsetWidth; rb.classList.add('pop'); } }
       const b = $('#restBtn'); if (b) b.textContent = 'Iniciar';
       return;
     }
@@ -149,7 +220,7 @@ SCREENS.resumen = {
     return `<div class="center" style="margin:8px 0 16px"><div class="avatar" style="width:72px;height:72px;margin:0 auto 10px;font-size:34px"><i class="ti ti-trophy"></i></div><h1>Entreno completado</h1><p class="mu">${esc(h.dayName)} · ${niceDate(h.date)}</p></div>
     <div class="grid3" style="margin-bottom:12px"><div class="stat"><i class="ti ti-clock"></i><div class="v">${h.duration} min</div><div class="mu sm">duración</div></div><div class="stat"><i class="ti ti-weight"></i><div class="v">${fmt0(h.volume)}</div><div class="mu sm">${u} levantados</div></div><div class="stat"><i class="ti ti-stack-2"></i><div class="v">${h.sets.length}</div><div class="mu sm">series</div></div></div>
     <div class="card"><div class="row sb" style="margin-bottom:7px"><span class="b">+<span id="xp">0</span> XP</span><span class="mu sm" id="lv">Nivel ${L0.level} · ${L0.name}</span></div><div class="bar"><div id="xbar" style="width:${L0.cur / L0.need * 100}%"></div></div><div class="mu sm" id="lvm" style="margin-top:6px">Entreno 100 · ${h.sets.length} series × 5${h.prs.length ? ' · ' + h.prs.length + ' récord' + (h.prs.length > 1 ? 's' : '') + ' × 25' : ''}</div></div>
-    ${h.prs.length ? `<div class="card"><div class="b" style="margin-bottom:4px"><i class="ti ti-flame ac"></i> ${h.prs.length} récord${h.prs.length > 1 ? 's' : ''} nuevo${h.prs.length > 1 ? 's' : ''}</div>${h.prs.map(r => `<div class="li"><span class="f1">${esc(EXD[r.ex].n)}</span><span class="b">${r.w ? fmt(r.w) + ' ' + u + ' × ' : ''}${r.r}${r.w ? '' : ' reps'}</span></div>`).join('')}</div>` : ''}
+    ${h.prs.length ? `<div class="card"><div class="b" style="margin-bottom:4px"><i class="ti ti-flame ac"></i> ${h.prs.length} récord${h.prs.length > 1 ? 's' : ''} nuevo${h.prs.length > 1 ? 's' : ''}</div>${h.prs.map(r => `<div class="li"><span class="f1">${esc(EXD[r.ex].n)}</span><span class="b">${r.w ? fmt(r.w) + ' ' + u + ' × ' : ''}${r.r}${r.w ? '' : exMode(r.ex) === 't' ? ' s' : ' reps'}</span></div>`).join('')}</div>` : ''}
     ${prev ? `<div class="card"><div class="b" style="margin-bottom:4px">Vs. la sesión anterior</div><div class="li">Volumen total<span class="b" style="margin-left:auto;color:${h.volume >= prev.volume ? 'var(--ac)' : 'var(--mu)'}">${prev.volume ? (h.volume >= prev.volume ? '+' : '') + Math.round((h.volume - prev.volume) / prev.volume * 100) + ' %' : '—'}</span></div><div class="li">Duración<span class="mu" style="margin-left:auto">${h.duration - prev.duration >= 0 ? '+' : '−'}${Math.abs(h.duration - prev.duration)} min</span></div></div>` : ''}
     ${a.fresh && a.fresh.length ? `<div class="card soft">${a.fresh.map(f => `<div class="row" style="padding:4px 0"><i class="ti ${f[2]} ac" style="font-size:22px"></i><span><b>Logro desbloqueado:</b> ${esc(f[1])}</span></div>`).join('')}</div>` : ''}
     <div class="card"><div class="b" style="margin-bottom:8px">¿Cómo te sentiste?</div><div class="row" style="gap:6px">${moods.map(m => `<div class="opt f1 ${h.mood === m[0] ? 'on' : ''}" data-mood="${m[0]}" style="flex-direction:column;gap:2px;margin:0;padding:10px 0"><i class="ti ${m[1]}" style="font-size:26px"></i><span class="mu sm">${m[2]}</span></div>`).join('')}</div><div class="mu sm" id="mdt" style="margin-top:8px">Esto ajusta la intensidad de tu próxima sesión.</div></div>

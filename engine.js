@@ -48,6 +48,42 @@ function params(goal, kind, level, firstCompound) {
   return { sets, lo, hi, rest };
 }
 
+// ---- Tipo de registro de cada ejercicio ----
+// 'w' = peso × repeticiones · 'b' = peso corporal (repeticiones; peso extra opcional) · 't' = tiempo (segundos aguantando)
+const EX_MODE = {
+  plancha: 't', curl_toalla: 't',
+  flexiones: 'b', flexiones_incl: 'b', flexiones_diamante: 'b', fondos: 'b', fondos_banco: 'b', dominadas: 'b', remo_invertido: 'b',
+  remo_toalla: 'b', sentadilla_corporal: 'b', puente_gluteo: 'b', puente_una_pierna: 'b', curl_nordico: 'b', elev_piernas: 'b', crunch: 'b', rueda: 'b',
+};
+function exMode(id) { return EX_MODE[id] || 'w'; }
+// Rango coherente con el tipo: segundos para isométricos, más repeticiones para peso corporal fácil, menos para los difíciles
+function exTarget(id, level, pr) {
+  const m = exMode(id), x = EXD[id] || {};
+  if (m === 't') return { sets: Math.min(3, pr.sets), lo: level === 'p' ? 20 : level === 'a' ? 45 : 30, hi: level === 'p' ? 40 : level === 'a' ? 90 : 60, rest: 60 };
+  if (m === 'b') {
+    const hard = !!x.d;
+    return { sets: pr.sets, lo: hard ? (level === 'p' ? 3 : 5) : (level === 'p' ? 8 : 10), hi: hard ? (level === 'p' ? 8 : 12) : (level === 'p' ? 15 : 20), rest: hard ? Math.max(pr.rest, 120) : Math.min(pr.rest, 90) };
+  }
+  return pr;
+}
+// Corrige planes creados antes de que existieran los tipos (p. ej. plancha con "reps")
+function normalizePlan(p) {
+  if (!p || !p.plan) return;
+  const fix = e => {
+    const m = exMode(e.id);
+    if ((m === 't' && e.hi < 20) || (m === 'b' && e.hi < 8)) Object.assign(e, exTarget(e.id, p.level, e));
+  };
+  p.plan.days.forEach(d => d.ex.forEach(fix));
+  if (p.live) p.live.items.forEach(it => { const before = it.hi; fix(it); if (it.hi !== before) { it.sug = suggest(p, it); it.rows = it.rows.map(r => r.done ? r : { w: it.sug.w, r: it.sug.r, done: false }); } });
+}
+// Cambia el ejercicio de un día y, si cambia el tipo (p. ej. a plancha), ajusta series, rango y descanso
+function retarget(p, e, id) {
+  const changed = exMode(id) !== exMode(e.id) || exMode(id) !== 'w'; e.id = id;
+  if (changed) { const x = EXD[id], t = exTarget(id, p.level, params(p.goal, x.k, p.level, false)); e.lo = t.lo; e.hi = t.hi; e.rest = t.rest; }
+}
+// "3 × 30-60 s" o "3 × 8-12 reps"
+function fmtTarget(e, sets) { return (sets ?? e.sets) + ' × ' + e.lo + '-' + e.hi + (exMode(e.id) === 't' ? ' s' : ' reps'); }
+
 // ---- Lectura del texto libre "Cuéntame lo que quieres" (por palabras clave) ----
 const NOTE_RULES = {
   pri:[[/brazo|b[ií]ceps|tr[ií]ceps/,'Brazos'],[/pecho|pectoral/,'Pecho'],[/espalda(?! baja)|dorsal/,'Espalda'],[/hombro(?!.{0,25}(duele|dolor|molest|lesi))/,'Hombros'],[/pierna|cu[aá]dricep|muslo/,'Pierna'],[/gl[uú]te|cola|nalga/,'Glúteos'],[/abdom|six ?pack|cuadritos|core|barriga plana/,'Abdomen']],
@@ -117,7 +153,8 @@ function generatePlan(p) {
       if (ex.k === 'c') firstC = false;
       if (priGroups.includes(g)) pr.sets += 1;
       pr.sets = Math.min(5, pr.sets);
-      dayEx.push({ id: ex.id, sets: pr.sets, lo: pr.lo, hi: pr.hi, rest: pr.rest });
+      const tg = exTarget(ex.id, p.level, pr);
+      dayEx.push({ id: ex.id, sets: tg.sets, lo: tg.lo, hi: tg.hi, rest: tg.rest });
     });
     let name = T.n;
     if (lims.includes('r') && LOWER.includes(TEMPLATES[k].f[0])) name += ' (cuidando rodilla)';
@@ -172,7 +209,16 @@ function roundW(w, units) { const step = units === 'lb' ? 2.5 : 0.5; return Math
 // Sugerencia de carga para hoy
 function suggest(p, item) {
   const units = p.settings.units; const last = lastSessionFor(p, item.id);
-  const deload = isDeload(p);
+  const deload = isDeload(p), mode = exMode(item.id);
+  if (mode === 't') {
+    if (!last) return { w: '', r: item.lo, msg: 'Primera vez: aguanta ' + item.lo + ' s con buena técnica. Si te sobra, sigue hasta ' + item.hi + ' s.', kind: 'new' };
+    const best = Math.max(...last.sets.map(s => +s.r || 0)), avgT = last.sets.reduce((a, s) => a + (+s.r || 0), 0) / last.sets.length;
+    if (deload) { const t = Math.max(15, Math.round(avgT * 0.7 / 5) * 5); return { w: '', r: t, msg: 'Semana de descarga: aguanta unos ' + t + ' s, sin llegar al límite.', kind: 'deload' }; }
+    if (last.sets.every(s => +s.r >= item.hi)) { const t = item.hi + 10; return { w: '', r: t, msg: 'Aguantaste el tope en todas. Hoy intenta ' + t + ' s por serie.', kind: 'up' }; }
+    const t = Math.min(item.hi, Math.max(item.lo, Math.round(avgT / 5) * 5 + 5));
+    return { w: '', r: t, msg: t > best ? 'La última vez tu mejor serie fue de ' + best + ' s. Hoy busca ' + t + ' s por serie.' : 'Hoy busca ' + t + ' s en todas las series (la última vez tu mejor serie fue de ' + best + ' s).', kind: 'same' };
+  }
+  if (!last && mode === 'b') return { w: '', r: item.lo, msg: 'Primera vez: haz ' + item.lo + ' a ' + item.hi + ' repeticiones con buena técnica. Peso extra solo si te sobran.', kind: 'new' };
   if (!last) return { w: '', r: item.hi, msg: 'Primera vez: elige un peso con el que llegues a ' + item.hi + ' repeticiones dejando 2 en reserva.', kind: 'new' };
   const maxW = Math.max(...last.sets.map(s => +s.w || 0));
   const top = last.sets.filter(s => (+s.w || 0) === maxW);
@@ -181,7 +227,7 @@ function suggest(p, item) {
   const missed = top.some(s => +s.r < item.lo);
   if (deload) return { w: maxW ? roundW(maxW * 0.65, units) : '', r: item.lo, msg: 'Semana de descarga: usa ' + (maxW ? roundW(maxW * 0.65, units) + ' ' + units : 'menos repeticiones') + ' y no llegues al fallo.', kind: 'deload' };
   if (!maxW) { // peso corporal
-    if (allHit) return { w: '', r: item.hi + 2, msg: 'Llegaste al tope. Intenta ' + (item.hi + 2) + ' reps o baja más lento (3 s).', kind: 'up' };
+    if (allHit) return { w: '', r: item.hi, msg: 'Llegaste al tope. Hoy baja más lento (3 s) o agrega peso extra (mochila o disco).', kind: 'up' };
     return { w: '', r: Math.min(item.hi, Math.round(avg) + 1), msg: 'Intenta ' + Math.min(item.hi, Math.round(avg) + 1) + ' repeticiones por serie.', kind: 'same' };
   }
   if (last.mood === 'fatal' && !allHit) return { w: maxW, r: item.lo, msg: 'La última vez fue muy dura: mantén ' + maxW + ' ' + units + ' y enfócate en la técnica.', kind: 'same' };

@@ -1,6 +1,6 @@
 <!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Avatar Gym</title>
 <style>:root{--ac:#c9ced4}body{background:#0d0b0b;color:#f2eeee;font:14px -apple-system,Segoe UI,sans-serif;margin:0;padding:16px}h1{font-size:18px;margin:0 0 4px}p{color:#9a8f8f;margin:0 0 14px}.g{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.c{background:#1a1616;border-radius:14px;padding:8px}.c b{display:block;font-size:13px;margin:4px 6px}.a{height:200px}</style></head><body>
-<h1>Nuevo estilo del avatar</h1><p>Figura atlética con músculo y contorno. Animación en bucle.</p><div class="g" id="g"></div>
+<h1>Nuevo estilo del avatar · v2</h1><p>Movimiento natural: bajada lenta, subida más rápida, pausas en los extremos.</p><div class="g" id="g"></div>
 <script>// Avatar animado de ejercicios: figura 2D con cinemática inversa.
 // Ángulos: 0 = abajo, 90 = adelante (derecha), 180 = arriba, 270 = atrás.
 // Cada postura: t (torso), H1/H2 (mano respecto al hombro), F1/F2 (tobillo respecto a la cadera),
@@ -19,7 +19,10 @@ function rigPose(P, sp) {
   const fr = sp.v === 'f', hip = [0, 0], sh = ad(hip, dv(P.t), sp.tl || BL.t), hd = ad(sh, dv(P.hd ?? P.t), BL.n + BL.hr);
   const sj = ad(sh, dv(P.t), fr ? -5 : -7);
   const S1 = fr ? ad(sj, [14, 0]) : sj, S2 = fr ? ad(sj, [-14, 0]) : sj, P1 = fr ? [7, 0] : hip, P2 = fr ? [-7, 0] : hip;
-  const H2 = P.H2 || P.H1, F2 = P.F2 || P.F1, mx = v => fr ? [-v[0], v[1]] : v;
+  // rel: manos medidas respecto al tronco (giran con él), p. ej. barra apoyada en la espalda
+  const rot = v => { if (!(P.rel || sp.rel)) return v; const d = (P.t - 180) * Math.PI / 180, c = Math.cos(d), s = Math.sin(d); return [v[0] * c + v[1] * s, v[1] * c - v[0] * s]; };
+  const H2 = rot(P.H2 || P.H1), F2 = P.F2 || P.F1, mx = v => fr ? [-v[0], v[1]] : v;
+  P = Object.assign({}, P, { H1: rot(P.H1) });
   const eb = P.eb ?? 1, kb = P.kb ?? -1, eb2 = P.eb2 ?? eb, kb2 = P.kb2 ?? kb;
   const [e1, h1] = ik(S1, ad(S1, P.H1), BL.ua, BL.fa, eb), [e2, h2] = ik(S2, ad(S2, mx(H2)), BL.ua, BL.fa, fr ? -eb2 : eb2);
   const [k1, an1] = ik(P1, ad(P1, P.F1), BL.th, BL.sh, kb), [k2, an2] = ik(P2, ad(P2, mx(F2)), BL.th, BL.sh, fr ? -kb2 : kb2);
@@ -27,10 +30,32 @@ function rigPose(P, sp) {
   const toe1 = ad(an1, dv(fr ? 150 : f1), fr ? 7 : BL.ft), toe2 = ad(an2, dv(fr ? -150 : f2), fr ? 7 : BL.ft);
   return { hip, sh, hd, S1, S2, P1, P2, e1, h1, e2, h2, k1, an1, k2, an2, toe1, toe2, hm: [(h1[0] + h2[0]) / 2, (h1[1] + h2[1]) / 2] };
 }
-function placePose(P, sp) {
-  const J = rigPose(P, sp), [k, x, y] = sp.anc || ['an1', 100, 160], o = J[k], dx = x - o[0], dy = y - o[1];
+function anchorJ(J, sp) {
+  const [k, x, y] = sp.anc || ['an1', 100, 160], o = J[k], dx = x - o[0], dy = y - o[1];
   for (const n in J) J[n] = [J[n][0] + dx, J[n][1] + dy];
   return J;
+}
+function placePose(P, sp) { return anchorJ(rigPose(P, sp), sp); }
+// Postura intermedia natural: se interpolan los ÁNGULOS de cada articulación (los huesos giran, no se deslizan)
+const angOf = (a, b) => Math.atan2(b[0] - a[0], b[1] - a[1]);
+const lerpAng = (a, b, u) => { let d = b - a; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return a + d * u; };
+function poseAt(sp, u) {
+  if (!sp._JA) { sp._JA = rigPose(sp.A, sp); sp._JB = rigPose(sp.B, sp); }
+  const A = sp._JA, B = sp._JB, fr = sp.v === 'f', L = (a, b) => a + (b - a) * u;
+  const t = L(sp.A.t ?? 180, sp.B.t ?? 180), hdA = L(sp.A.hd ?? sp.A.t ?? 180, sp.B.hd ?? sp.B.t ?? 180);
+  const hip = [0, 0], sh = ad(hip, dv(t), sp.tl || BL.t), hd = ad(sh, dv(hdA), BL.n + BL.hr), sj = ad(sh, dv(t), fr ? -5 : -7);
+  const J = { hip, sh, hd, S1: fr ? ad(sj, [14, 0]) : sj, S2: fr ? ad(sj, [-14, 0]) : sj, P1: fr ? [7, 0] : hip, P2: fr ? [-7, 0] : hip };
+  const chain = (root, mid, end, l1, l2) => {
+    const a1 = lerpAng(angOf(A[root], A[mid]), angOf(B[root], B[mid]), u), a2 = lerpAng(angOf(A[mid], A[end]), angOf(B[mid], B[end]), u);
+    J[mid] = [J[root][0] + Math.sin(a1) * l1, J[root][1] + Math.cos(a1) * l1];
+    J[end] = [J[mid][0] + Math.sin(a2) * l2, J[mid][1] + Math.cos(a2) * l2];
+  };
+  chain('S1', 'e1', 'h1', BL.ua, BL.fa); chain('S2', 'e2', 'h2', BL.ua, BL.fa);
+  chain('P1', 'k1', 'an1', BL.th, BL.sh); chain('P2', 'k2', 'an2', BL.th, BL.sh);
+  const fl = fr ? 7 : BL.ft;
+  [['an1', 'toe1'], ['an2', 'toe2']].forEach(([a, b]) => { const g = lerpAng(angOf(A[a], A[b]), angOf(B[a], B[b]), u); J[b] = [J[a][0] + Math.sin(g) * fl, J[a][1] + Math.cos(g) * fl]; });
+  J.hm = [(J.h1[0] + J.h2[0]) / 2, (J.h1[1] + J.h2[1]) / 2];
+  return anchorJ(J, sp);
 }
 function lerpPose(A, B, u) {
   const o = {};
@@ -56,7 +81,7 @@ function drawEq(J, eq, front) {
       case 'cab': { const p = [e[1], e[2]]; s += ln(p, eqPt(J, e[3]), 1.6, '#8a9099') + cir(p, 5, 'none', AV.eq, 3); break; }
       case 'rope': s += ln(eqPt(J, e[1]), eqPt(J, e[2]), 2.2, '#8a9099'); break;
       case 'bar': { const a = J[e[1]], b = J[e[2]], x = e[3] || 0, d = a[0] > b[0] ? 1 : -1; s += ln([a[0] + x * d, a[1]], [b[0] - x * d, b[1]], 4, AV.eq); break; }
-      case 'bb': case 'bbk': { const p = eqPt(J, e[1], e[2], e[3]); s += cir(p, 11.5, '#33373e', 'var(--ac)', 2.5) + cir(p, 3, 'var(--ac)'); break; }
+      case 'bb': case 'bbk': { const p = eqPt(J, e[1], e[2], e[3]); s += cir(p, e[4] || 14, '#33373e', 'var(--ac)', 2.5) + cir(p, (e[4] || 14) * .62, 'none', 'rgba(255,255,255,.12)', 1.2) + cir(p, 3, 'var(--ac)'); break; }
       case 'db': { const p = eqPt(J, e[1], e[2], e[3]); s += cir(p, 6.5, '#33373e', 'var(--ac)', 2.2); break; }
       case 'wheel': { const p = eqPt(J, e[1], e[2], e[3]); s += cir(p, 9, 'none', 'var(--ac)', 3.5) + cir(p, 2.5, 'var(--ac)'); break; }
       case 'grip': s += cir(eqPt(J, e[1]), 4, AV.eq, '#0d0b0b', 1); break;
@@ -122,7 +147,7 @@ function drawBody(J, sp) {
 }
 function animBox(sp) {
   const pts = [];
-  [0, .5, 1].forEach(u => { const J = placePose(lerpPose(sp.A, sp.B, u), sp); for (const k in J) pts.push(J[k]); });
+  [0, .5, 1].forEach(u => { const J = poseAt(sp, u); for (const k in J) pts.push(J[k]); });
   (sp.eq || []).forEach(e => { if (e[0] === 'ln') pts.push([e[1], e[2]], [e[3], e[4]]); if (e[0] === 'box') pts.push([e[1], e[2]], [e[1] + e[3], e[2] + e[4]]); if (e[0] === 'cab') pts.push([e[1], e[2]]); });
   let x0 = Math.min(...pts.map(p => p[0])) - 16, x1 = Math.max(...pts.map(p => p[0])) + 16, y0 = Math.min(...pts.map(p => p[1])) - 16, y1 = Math.max(...pts.map(p => p[1])) + 14;
   const fl = floorY(sp); if (fl) y1 = Math.max(y1, fl + 8);
@@ -138,12 +163,12 @@ function floorY(sp) {
   return m + 4;
 }
 function animFrame(sp, u, box) {
-  const J = placePose(lerpPose(sp.A, sp.B, u), sp), fl = sp._fl;
+  const J = poseAt(sp, u), fl = sp._fl;
   return (fl ? ln([box[0] - 20, fl], [box[0] + box[2] + 20, fl], 2, AV.floor) : '') + drawEq(J, sp.eq, false) + drawBody(J, sp) + drawEq(J, sp.eq, true);
 }
 function animSpec(id) {
   const raw = (typeof ANIMS !== 'undefined' && ANIMS[id]) || ANIMS._default;
-  const sp = Object.assign({}, raw);
+  const sp = Object.assign({ id }, raw);
   sp.A = Object.assign({}, raw.base || {}, raw.A); sp.B = Object.assign({}, raw.base || {}, raw.B || raw.A);
   sp._fl = floorY(sp);
   return sp;
@@ -154,7 +179,7 @@ function animSVG(id, u = 0) {
 }
 function playAnim(el, id) {
   if (!el) return;
-  const sp = animSpec(id), box = animBox(sp), dur = sp.dur || 2600, t0 = performance.now();
+  const sp = animSpec(id), box = animBox(sp), t0 = performance.now();
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', box.map(v => v.toFixed(1)).join(' '));
   svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
@@ -165,16 +190,26 @@ function playAnim(el, id) {
     if (!el.isConnected) return;
     if (now - last > 30) {
       last = now;
-      const ph = ((now - t0) % dur) / dur;
-      // ida (40 %), pausa (10 %), vuelta (40 %), pausa (10 %)
-      const x = ph < .4 ? ph / .4 : ph < .5 ? 1 : ph < .9 ? 1 - (ph - .5) / .4 : 0;
-      svg.innerHTML = animFrame(sp, (1 - Math.cos(Math.PI * x)) / 2, box);
+      svg.innerHTML = animFrame(sp, animPhase(sp, now - t0), box);
     }
     requestAnimationFrame(step);
   };
   requestAnimationFrame(step);
 }
 
+// Ritmo natural: la fase de bajada (excéntrica) es lenta y la de subida (concéntrica) más rápida,
+// con una pausa breve en cada extremo. Curva de mínimo tirón (como se mueve una persona).
+const smooth5 = x => x * x * x * (10 + x * (6 * x - 15));
+function animPhase(sp, ms) {
+  const up = sp.up || (typeof ANIM_UP !== 'undefined' && ANIM_UP.has(sp.id));
+  const slow = 1500, fast = 950, holdB = up ? 380 : 250, holdA = 450;
+  const dAB = sp.dur ? sp.dur / 2 : up ? fast : slow, dBA = sp.dur ? sp.dur / 2 : up ? slow : fast;
+  const T = dAB + holdB + dBA + holdA, m = ms % T;
+  if (m < dAB) return smooth5(m / dAB);
+  if (m < dAB + holdB) return 1;
+  if (m < dAB + holdB + dBA) return 1 - smooth5((m - dAB - holdB) / dBA);
+  return 0;
+}
 // Posturas de cada ejercicio para el avatar (ver anim.js). A = inicio, B = punto final del movimiento.
 const BENCH = (x1, x2, y, fl = 164) => [['ln', x1, y, x2, y, 8], ['ln', x1 + 8, y, x1 + 8, fl, 4], ['ln', x2 - 8, y, x2 - 8, fl, 4]];
 const SEAT = (x1, x2, y) => [['ln', x1, y, x2, y, 7], ['ln', (x1 + x2) / 2, y, (x1 + x2) / 2, 164, 4]];
@@ -185,6 +220,12 @@ const LIE = { anc: ['sh', 70, 104], base: { t: 270, F1: [30, 56] }, fl: ['an1'] 
 const KNEEL = { F1: [-37, 38], ft1: -100 };
 const PUSHUP = { anc: ['an1', 30, 146], fl: ['h1'], base: { ft1: 20 }, A: { t: 114, F1: [-68, 30], H1: [0, 50] }, B: { t: 97, F1: [-74, 9], H1: [-9, 15] } };
 
+// Ejercicios donde ir de A a B es la fase de esfuerzo (concéntrica): se hace más rápido que la vuelta.
+const ANIM_UP = new Set(['aperturas_polea', 'pec_deck', 'jalon_pecho', 'dominadas', 'remo_pecho_apoyado', 'remo_polea', 'remo_barra', 'remo_mancuerna',
+  'remo_maquina', 'pullover_polea', 'remo_invertido', 'remo_toalla', 'elev_lat', 'elev_lat_polea', 'face_pull', 'pajaros', 'curl_barra', 'curl_martillo',
+  'curl_inclinado', 'curl_bayesian', 'curl_predicador', 'ext_tricep_cabeza', 'ext_tricep_polea_alta', 'jalon_triceps', 'step_up', 'ext_cuadriceps',
+  'curl_femoral_sentado', 'curl_femoral_acostado', 'hip_thrust', 'puente_gluteo', 'puente_una_pierna', 'abduccion_maq', 'patada_gluteo', 'gemelo_pie',
+  'gemelo_prensa', 'crunch_polea', 'crunch', 'elev_piernas']);
 const ANIMS = {
   _default: { base: STAND, A: {}, B: { t: 178 } },
 
@@ -257,7 +298,7 @@ const ANIMS = {
   flexiones_diamante: { ...PUSHUP },
 
   // ---------- CUÁDRICEPS ----------
-  sentadilla: { A: { t: 180, F1: [0, 75], H1: [-10, 8] }, B: { t: 138, F1: [19, 35], H1: [-10, 8] }, eq: [['bbk', 'sh', -13, 2]] },
+  sentadilla: { rel: 1, base: { H1: [-19, -10], eb: -1 }, A: { t: 178, F1: [2, 75] }, B: { t: 136, F1: [21, 34] }, eq: [['bbk', 'h1', -3, -2, 15]] },
   sentadilla_goblet: { A: { t: 180, F1: [0, 75], H1: [12, 14] }, B: { t: 150, F1: [19, 35], H1: [14, 16] }, eq: [['db', 'h1']] },
   sentadilla_corporal: { A: { t: 180, F1: [0, 75], H1: [4, 51] }, B: { t: 145, F1: [19, 35], H1: [50, 4] } },
   sentadilla_hack: { anc: ['an1', 110, 160], base: { t: 200, H1: [4, -8] }, A: { F1: [26, 70] }, B: { F1: [42, 22] },

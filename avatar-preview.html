@@ -1,0 +1,311 @@
+<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Avatar Gym</title>
+<style>:root{--ac:#c9ced4}body{background:#0d0b0b;color:#f2eeee;font:14px -apple-system,Segoe UI,sans-serif;margin:0;padding:16px}h1{font-size:18px;margin:0 0 4px}p{color:#9a8f8f;margin:0 0 14px}.g{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.c{background:#1a1616;border-radius:14px;padding:8px}.c b{display:block;font-size:13px;margin:4px 6px}.a{height:200px}</style></head><body>
+<h1>Nuevo estilo del avatar</h1><p>Figura atlética con músculo y contorno. Animación en bucle.</p><div class="g" id="g"></div>
+<script>// Avatar animado de ejercicios: figura 2D con cinemática inversa.
+// Ángulos: 0 = abajo, 90 = adelante (derecha), 180 = arriba, 270 = atrás.
+// Cada postura: t (torso), H1/H2 (mano respecto al hombro), F1/F2 (tobillo respecto a la cadera),
+// eb/kb (lado al que se doblan codo/rodilla), ft1/ft2 (ángulo del pie). v:'f' = vista de frente.
+const BL = { t: 46, n: 6, hr: 8.5, ua: 27, fa: 25, th: 38, sh: 37, ft: 13 };
+const dv = a => [Math.sin(a * Math.PI / 180), Math.cos(a * Math.PI / 180)];
+const ad = (p, v, s = 1) => [p[0] + v[0] * s, p[1] + v[1] * s];
+function ik(s, t, l1, l2, b) {
+  const dx = t[0] - s[0], dy = t[1] - s[1], d = Math.hypot(dx, dy) || .001;
+  const dd = Math.min(l1 + l2 - .01, Math.max(Math.abs(l1 - l2) + .01, d));
+  const ux = dx / d, uy = dy / d;
+  const a = Math.acos((l1 * l1 + dd * dd - l2 * l2) / (2 * l1 * dd)) * b, c = Math.cos(a), si = Math.sin(a);
+  return [[s[0] + (ux * c - uy * si) * l1, s[1] + (ux * si + uy * c) * l1], [s[0] + ux * dd, s[1] + uy * dd]];
+}
+function rigPose(P, sp) {
+  const fr = sp.v === 'f', hip = [0, 0], sh = ad(hip, dv(P.t), sp.tl || BL.t), hd = ad(sh, dv(P.hd ?? P.t), BL.n + BL.hr);
+  const sj = ad(sh, dv(P.t), fr ? -5 : -7);
+  const S1 = fr ? ad(sj, [14, 0]) : sj, S2 = fr ? ad(sj, [-14, 0]) : sj, P1 = fr ? [7, 0] : hip, P2 = fr ? [-7, 0] : hip;
+  const H2 = P.H2 || P.H1, F2 = P.F2 || P.F1, mx = v => fr ? [-v[0], v[1]] : v;
+  const eb = P.eb ?? 1, kb = P.kb ?? -1, eb2 = P.eb2 ?? eb, kb2 = P.kb2 ?? kb;
+  const [e1, h1] = ik(S1, ad(S1, P.H1), BL.ua, BL.fa, eb), [e2, h2] = ik(S2, ad(S2, mx(H2)), BL.ua, BL.fa, fr ? -eb2 : eb2);
+  const [k1, an1] = ik(P1, ad(P1, P.F1), BL.th, BL.sh, kb), [k2, an2] = ik(P2, ad(P2, mx(F2)), BL.th, BL.sh, fr ? -kb2 : kb2);
+  const f1 = P.ft1 ?? 90, f2 = P.ft2 ?? f1;
+  const toe1 = ad(an1, dv(fr ? 150 : f1), fr ? 7 : BL.ft), toe2 = ad(an2, dv(fr ? -150 : f2), fr ? 7 : BL.ft);
+  return { hip, sh, hd, S1, S2, P1, P2, e1, h1, e2, h2, k1, an1, k2, an2, toe1, toe2, hm: [(h1[0] + h2[0]) / 2, (h1[1] + h2[1]) / 2] };
+}
+function placePose(P, sp) {
+  const J = rigPose(P, sp), [k, x, y] = sp.anc || ['an1', 100, 160], o = J[k], dx = x - o[0], dy = y - o[1];
+  for (const n in J) J[n] = [J[n][0] + dx, J[n][1] + dy];
+  return J;
+}
+function lerpPose(A, B, u) {
+  const o = {};
+  for (const k of new Set([...Object.keys(A), ...Object.keys(B)])) {
+    const a = A[k] ?? B[k], b = B[k] ?? A[k];
+    o[k] = Array.isArray(a) ? a.map((v, i) => v + (b[i] - v) * u) : typeof a === 'number' ? a + (b - a) * u : a;
+  }
+  return o;
+}
+const AV = { body: '#d9dde2', far: '#7d848d', eq: '#4b5058', floor: '#2e2828' };
+function ln(a, b, w, c, op = '') { return `<line x1="${a[0].toFixed(1)}" y1="${a[1].toFixed(1)}" x2="${b[0].toFixed(1)}" y2="${b[1].toFixed(1)}" stroke="${c}" stroke-width="${w}" stroke-linecap="round"${op}/>`; }
+function cir(p, r, f, s = '', sw = 0) { return `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="${r}" fill="${f}"${s ? ` stroke="${s}" stroke-width="${sw}"` : ''}/>`; }
+function eqPt(J, r, dx = 0, dy = 0) { const p = typeof r === 'string' ? J[r] : r; return [p[0] + dx, p[1] + dy]; }
+const FRONT_EQ = new Set(['bb', 'db', 'grip', 'wheel', 'pad']);
+function drawEq(J, eq, front) {
+  let s = '';
+  for (const e of eq || []) {
+    if (FRONT_EQ.has(e[0]) !== front) continue;
+    switch (e[0]) {
+      case 'ln': s += ln([e[1], e[2]], [e[3], e[4]], e[5] || 5, AV.eq); break;
+      case 'box': s += `<rect x="${e[1]}" y="${e[2]}" width="${e[3]}" height="${e[4]}" rx="3" fill="${AV.eq}"/>`; break;
+      case 'seg': { const a = eqPt(J, e[1], e[3], e[4]), b = eqPt(J, e[2], e[3], e[4]), L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, u = [(b[0] - a[0]) / L, (b[1] - a[1]) / L], x = e[6] || 0; s += ln(ad(a, u, -x), ad(b, u, x), e[5] || 8, AV.eq); break; }
+      case 'cab': { const p = [e[1], e[2]]; s += ln(p, eqPt(J, e[3]), 1.6, '#8a9099') + cir(p, 5, 'none', AV.eq, 3); break; }
+      case 'rope': s += ln(eqPt(J, e[1]), eqPt(J, e[2]), 2.2, '#8a9099'); break;
+      case 'bar': { const a = J[e[1]], b = J[e[2]], x = e[3] || 0, d = a[0] > b[0] ? 1 : -1; s += ln([a[0] + x * d, a[1]], [b[0] - x * d, b[1]], 4, AV.eq); break; }
+      case 'bb': case 'bbk': { const p = eqPt(J, e[1], e[2], e[3]); s += cir(p, 11.5, '#33373e', 'var(--ac)', 2.5) + cir(p, 3, 'var(--ac)'); break; }
+      case 'db': { const p = eqPt(J, e[1], e[2], e[3]); s += cir(p, 6.5, '#33373e', 'var(--ac)', 2.2); break; }
+      case 'wheel': { const p = eqPt(J, e[1], e[2], e[3]); s += cir(p, 9, 'none', 'var(--ac)', 3.5) + cir(p, 2.5, 'var(--ac)'); break; }
+      case 'grip': s += cir(eqPt(J, e[1]), 4, AV.eq, '#0d0b0b', 1); break;
+      case 'pad': s += cir(eqPt(J, e[1], e[2], e[3]), e[4] || 6, AV.eq); break;
+    }
+  }
+  return s;
+}
+// ---- Figura atlética: extremidades con músculo (forma de huso) y contorno para definir cada parte ----
+const SK = { body: '#e2e5e9', far: '#8e959e', line: '#0d0b0b', hair: '#3b4048', sh: 'rgba(0,0,0,.13)' };
+const f1 = v => v.toFixed(1);
+function nrm(a, b) { const dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy) || 1; return [-dy / L, dx / L]; }
+// a→b con radio r0 al inicio, rm en el vientre del músculo (posición t) y r1 al final
+function limb(a, b, r0, rm, r1, t, fill) {
+  const n = nrm(a, b), P = (c, r, s) => [c[0] + n[0] * r * s, c[1] + n[1] * r * s];
+  const m = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+  const ctl = s => { const p0 = P(a, r0, s), p1 = P(b, r1, s), pm = P(m, rm, s); return [2 * pm[0] - (p0[0] + p1[0]) / 2, 2 * pm[1] - (p0[1] + p1[1]) / 2]; };
+  const A0 = P(a, r0, 1), B0 = P(b, r1, 1), B1 = P(b, r1, -1), A1 = P(a, r0, -1), c1 = ctl(1), c2 = ctl(-1);
+  return `<path d="M${f1(A0[0])} ${f1(A0[1])}Q${f1(c1[0])} ${f1(c1[1])} ${f1(B0[0])} ${f1(B0[1])}A${r1} ${r1} 0 0 0 ${f1(B1[0])} ${f1(B1[1])}Q${f1(c2[0])} ${f1(c2[1])} ${f1(A1[0])} ${f1(A1[1])}A${r0} ${r0} 0 0 0 ${f1(A0[0])} ${f1(A0[1])}Z" fill="${fill}" stroke="${SK.line}" stroke-width="1.5" stroke-linejoin="round"/>`;
+}
+// contorno suave cerrado (Catmull-Rom) a partir de puntos
+function smoothPath(pts, fill) {
+  const n = pts.length; let d = `M${f1(pts[0][0])} ${f1(pts[0][1])}`;
+  for (let i = 0; i < n; i++) {
+    const p0 = pts[(i - 1 + n) % n], p1 = pts[i], p2 = pts[(i + 1) % n], p3 = pts[(i + 2) % n];
+    d += `C${f1(p1[0] + (p2[0] - p0[0]) / 6)} ${f1(p1[1] + (p2[1] - p0[1]) / 6)} ${f1(p2[0] - (p3[0] - p1[0]) / 6)} ${f1(p2[1] - (p3[1] - p1[1]) / 6)} ${f1(p2[0])} ${f1(p2[1])}`;
+  }
+  return `<path d="${d}Z" fill="${fill}" stroke="${SK.line}" stroke-width="1.5" stroke-linejoin="round"/>`;
+}
+function torsoPts(J, fr, tl) {
+  const L = Math.hypot(J.sh[0] - J.hip[0], J.sh[1] - J.hip[1]) || 1, u = [(J.sh[0] - J.hip[0]) / L, (J.sh[1] - J.hip[1]) / L], nf = [-u[1], u[0]];
+  const at = (s, o) => [J.hip[0] + u[0] * L * s + nf[0] * o, J.hip[1] + u[1] * L * s + nf[1] * o];
+  const k = (tl || BL.t) / BL.t;
+  // perfil: [posición a lo largo del tronco, distancia al eje]; positivo = pecho/abdomen, negativo = espalda/glúteo
+  const prof = fr
+    ? [[-.1, 0], [-.04, 11], [.3, 10], [.55, 12], [.82, 16.5], [1, 16], [1.08, 9], [1.08, -9], [1, -16], [.82, -16.5], [.55, -12], [.3, -10], [-.04, -11]]
+    : [[-.12, -2], [-.02, 9.5], [.3, 9.5], [.6, 11.5], [.8, 13.5], [.98, 9], [1.06, 2], [1.02, -8], [.8, -12], [.5, -9], [.22, -10.5], [.02, -13.5]];
+  return prof.map(([s, o]) => at(s / (fr ? 1 : 1) , o * (fr ? 1 : 1) * (k < 1 ? 1 : 1)));
+}
+function drawBody(J, sp) {
+  const fr = sp.v === 'f', B = SK.body, F = fr ? '#c9cdd2' : SK.far;
+  let s = '';
+  const leg = (P, k, an, toe, c) =>
+    limb(P, k, 9.5, 10.5, 6.5, .38, c) + limb(an, toe, 4.2, 4.6, 3.6, .5, c) + limb(k, an, 6, 7.6, 3.8, .3, c);
+  const arm = (S, e, h, c) =>
+    limb(S, e, 7, 7.2, 4.8, .45, c) + limb(e, h, 5, 5.6, 3.4, .28, c) + cir(h, 4.3, c, SK.line, 1.5) + cir(S, 7.6, c, SK.line, 1.5);
+  // extremidades del fondo
+  s += leg(J.P2, J.k2, J.an2, J.toe2, F) + arm(J.S2, J.e2, J.h2, F);
+  // cuello, tronco y cabeza
+  const L = Math.hypot(J.hd[0] - J.sh[0], J.hd[1] - J.sh[1]) || 1, hu = [(J.hd[0] - J.sh[0]) / L, (J.hd[1] - J.sh[1]) / L];
+  s += limb(ad(J.sh, hu, -2), ad(J.sh, hu, 9), 5, 4.8, 4.5, .5, B);
+  s += smoothPath(torsoPts(J, fr, sp.tl), B);
+  if (fr) {
+    const at = (x, y) => [J.hip[0] + x, J.hip[1] + (J.sh[1] - J.hip[1]) * y];
+    s += `<path d="M${f1(at(0, .18)[0])} ${f1(at(0, .18)[1])}L${f1(at(0, .66)[0])} ${f1(at(0, .66)[1])}M${f1(at(-12, .74)[0])} ${f1(at(-12, .7)[1])}Q${f1(at(0, .64)[0])} ${f1(at(0, .64)[1])} ${f1(at(12, .7)[0])} ${f1(at(12, .7)[1])}" fill="none" stroke="${SK.sh}" stroke-width="1.4" stroke-linecap="round"/>`;
+  }
+  const nf = fr ? [0, 0] : [-(J.sh[1] - J.hip[1]), J.sh[0] - J.hip[0]], nl = Math.hypot(nf[0], nf[1]) || 1;
+  const hairC = fr ? ad(J.hd, hu, 1.6) : [J.hd[0] - nf[0] / nl * 1.8 + hu[0] * 1.2, J.hd[1] - nf[1] / nl * 1.8 + hu[1] * 1.2];
+  s += cir(hairC, 9.4, SK.hair, SK.line, 1.5) + cir(J.hd, 8.8, B, SK.line, 1.5);
+  // extremidades del frente
+  s += leg(J.P1, J.k1, J.an1, J.toe1, B) + arm(J.S1, J.e1, J.h1, B);
+  return s;
+}
+function animBox(sp) {
+  const pts = [];
+  [0, .5, 1].forEach(u => { const J = placePose(lerpPose(sp.A, sp.B, u), sp); for (const k in J) pts.push(J[k]); });
+  (sp.eq || []).forEach(e => { if (e[0] === 'ln') pts.push([e[1], e[2]], [e[3], e[4]]); if (e[0] === 'box') pts.push([e[1], e[2]], [e[1] + e[3], e[2] + e[4]]); if (e[0] === 'cab') pts.push([e[1], e[2]]); });
+  let x0 = Math.min(...pts.map(p => p[0])) - 16, x1 = Math.max(...pts.map(p => p[0])) + 16, y0 = Math.min(...pts.map(p => p[1])) - 16, y1 = Math.max(...pts.map(p => p[1])) + 14;
+  const fl = floorY(sp); if (fl) y1 = Math.max(y1, fl + 8);
+  const w = x1 - x0, h = y1 - y0, W = Math.max(w, h * 1.25), H = Math.max(h, W / 1.9);
+  return [x0 - (W - w) / 2, y0 - (H - h) / 2, W, H];
+}
+function floorY(sp) {
+  if (sp.fl === 0) return 0;
+  if (typeof sp.fl === 'number') return sp.fl;
+  const keys = sp.fl || ['toe1', 'an1'];
+  let m = -1e9;
+  [0, 1].forEach(u => { const J = placePose(u ? sp.B : sp.A, sp); keys.forEach(k => m = Math.max(m, J[k][1])); });
+  return m + 4;
+}
+function animFrame(sp, u, box) {
+  const J = placePose(lerpPose(sp.A, sp.B, u), sp), fl = sp._fl;
+  return (fl ? ln([box[0] - 20, fl], [box[0] + box[2] + 20, fl], 2, AV.floor) : '') + drawEq(J, sp.eq, false) + drawBody(J, sp) + drawEq(J, sp.eq, true);
+}
+function animSpec(id) {
+  const raw = (typeof ANIMS !== 'undefined' && ANIMS[id]) || ANIMS._default;
+  const sp = Object.assign({}, raw);
+  sp.A = Object.assign({}, raw.base || {}, raw.A); sp.B = Object.assign({}, raw.base || {}, raw.B || raw.A);
+  sp._fl = floorY(sp);
+  return sp;
+}
+function animSVG(id, u = 0) {
+  const sp = animSpec(id), box = animBox(sp);
+  return `<svg viewBox="${box.map(v => v.toFixed(1)).join(' ')}" preserveAspectRatio="xMidYMid meet" style="width:100%;height:100%;display:block">${animFrame(sp, u, box)}</svg>`;
+}
+function playAnim(el, id) {
+  if (!el) return;
+  const sp = animSpec(id), box = animBox(sp), dur = sp.dur || 2600, t0 = performance.now();
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', box.map(v => v.toFixed(1)).join(' '));
+  svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+  svg.style.cssText = 'width:100%;height:100%;display:block';
+  el.innerHTML = ''; el.appendChild(svg);
+  let last = 0;
+  const step = now => {
+    if (!el.isConnected) return;
+    if (now - last > 30) {
+      last = now;
+      const ph = ((now - t0) % dur) / dur;
+      // ida (40 %), pausa (10 %), vuelta (40 %), pausa (10 %)
+      const x = ph < .4 ? ph / .4 : ph < .5 ? 1 : ph < .9 ? 1 - (ph - .5) / .4 : 0;
+      svg.innerHTML = animFrame(sp, (1 - Math.cos(Math.PI * x)) / 2, box);
+    }
+    requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+// Posturas de cada ejercicio para el avatar (ver anim.js). A = inicio, B = punto final del movimiento.
+const BENCH = (x1, x2, y, fl = 164) => [['ln', x1, y, x2, y, 8], ['ln', x1 + 8, y, x1 + 8, fl, 4], ['ln', x2 - 8, y, x2 - 8, fl, 4]];
+const SEAT = (x1, x2, y) => [['ln', x1, y, x2, y, 7], ['ln', (x1 + x2) / 2, y, (x1 + x2) / 2, 164, 4]];
+const BACKREST = (dx = -7, dy = 0) => ['seg', 'hip', 'sh', dx, dy, 8, 4];
+const STAND = { t: 180, H1: [4, 51], F1: [0, 75] };
+const SIT = { t: 180, F1: [36, 38] };
+const LIE = { anc: ['sh', 70, 104], base: { t: 270, F1: [30, 56] }, fl: ['an1'] };
+const KNEEL = { F1: [-37, 38], ft1: -100 };
+const PUSHUP = { anc: ['an1', 30, 146], fl: ['h1'], base: { ft1: 20 }, A: { t: 114, F1: [-68, 30], H1: [0, 50] }, B: { t: 97, F1: [-74, 9], H1: [-9, 15] } };
+
+const ANIMS = {
+  _default: { base: STAND, A: {}, B: { t: 178 } },
+
+  // ---------- PECHO ----------
+  press_banca: { ...LIE, A: { H1: [0, -50] }, B: { H1: [6, -6] }, eq: [...BENCH(48, 135, 112), ['bb', 'h1']] },
+  press_cerrado: { ...LIE, A: { H1: [0, -50] }, B: { H1: [10, -6] }, eq: [...BENCH(48, 135, 112), ['bb', 'h1']] },
+  press_mancuernas: { ...LIE, A: { H1: [0, -50] }, B: { H1: [4, -4] }, eq: [...BENCH(48, 135, 112), ['db', 'h1']] },
+  press_inclinado: { anc: ['hip', 120, 122], fl: ['an1'], base: { t: 240, F1: [32, 38] }, A: { H1: [-2, -50] }, B: { H1: [6, -6] },
+    eq: [['seg', 'hip', 'sh', -3.5, 6, 8, 8], ['ln', 116, 129, 148, 129, 7], ['ln', 110, 130, 110, 164, 4], ['db', 'h1']] },
+  press_maquina: { anc: ['hip', 90, 124], base: { ...SIT, t: 183 }, A: { H1: [50, 2] }, B: { H1: [14, 6] },
+    eq: [BACKREST(), ...SEAT(70, 118, 131), ['ln', 158, 40, 158, 164, 5], ['grip', 'h1']] },
+  press_inclinado_maq: { anc: ['hip', 90, 124], base: { ...SIT, t: 195 }, A: { H1: [38, -34] }, B: { H1: [10, -4] },
+    eq: [['seg', 'hip', 'sh', -7, -2, 8, 4], ...SEAT(70, 118, 131), ['ln', 158, 20, 158, 164, 5], ['grip', 'h1']] },
+  aperturas_polea: { v: 'f', anc: ['an1', 111, 160], base: { t: 180, F1: [4, 75] }, A: { H1: [48, -8] }, B: { H1: [-8, 30] },
+    eq: [['cab', 192, 28, 'h1'], ['cab', 30, 28, 'h2'], ['grip', 'h1'], ['grip', 'h2']] },
+  pec_deck: { v: 'f', anc: ['hip', 100, 120], base: { t: 180, F1: [8, 44] }, A: { H1: [46, -16] }, B: { H1: [-8, 4] },
+    eq: [['ln', 80, 126, 120, 126, 7], ['ln', 40, 20, 40, 164, 4], ['ln', 160, 20, 160, 164, 4], ['ln', 40, 20, 160, 20, 4], ['pad', 'h1', 0, 0, 5], ['pad', 'h2', 0, 0, 5]] },
+  aperturas_manc: { v: 'f', fl: 0, anc: ['hip', 100, 110], base: { t: 180, F1: [4, 75] }, A: { H1: [-8, 22] }, B: { H1: [50, 6] },
+    eq: [['box', 86, 44, 28, 110], ['db', 'h1'], ['db', 'h2']] },
+  flexiones: { ...PUSHUP },
+  flexiones_incl: { anc: ['an1', 30, 118], fl: ['h1'], base: { ft1: 30 }, A: { t: 85, F1: [-75, -6], H1: [0, 50] }, B: { t: 77, F1: [-73, -17], H1: [3, 33] },
+    eq: [['box', 8, 123, 40, 60]] },
+  fondos: { anc: ['h1', 120, 90], fl: 0, base: { t: 172, F1: [-18, 62], kb: 1 }, A: { H1: [2, 50] }, B: { H1: [10, 22] },
+    eq: [['ln', 95, 92, 150, 92, 6], ['ln', 140, 92, 140, 175, 4]] },
+
+  // ---------- ESPALDA ----------
+  jalon_pecho: { v: 'f', anc: ['hip', 100, 125], fl: ['an1'], base: { t: 180, F1: [8, 40] }, A: { H1: [22, -48] }, B: { H1: [26, -2] },
+    eq: [['ln', 80, 131, 120, 131, 7], ['cab', 100, 0, 'hm'], ['bar', 'h1', 'h2', 14]] },
+  dominadas: { v: 'f', anc: ['h1', 138, 30], fl: 0, A: { t: 180, H1: [24, -48], F1: [2, 74] }, B: { t: 180, H1: [24, -8], F1: [6, 70] },
+    eq: [['ln', 50, 30, 152, 30, 5]] },
+  remo_pecho_apoyado: { anc: ['hip', 95, 112], fl: ['an1'], base: { t: 130, F1: [-34, 62] }, A: { H1: [2, 50] }, B: { H1: [-20, 22] },
+    eq: [['seg', 'hip', 'sh', 5, 8, 9, 6], ['ln', 108, 128, 104, 164, 4], ['db', 'h1']] },
+  remo_polea: { anc: ['hip', 70, 140], fl: 152, base: { F1: [70, -6] }, A: { t: 160, H1: [50, 4] }, B: { t: 185, H1: [6, 22] },
+    eq: [['ln', 45, 147, 95, 147, 7], ['ln', 150, 115, 150, 150, 5], ['cab', 192, 138, 'h1'], ['grip', 'h1']] },
+  remo_barra: { base: { t: 130, F1: [14, 72] }, A: { H1: [2, 50] }, B: { H1: [-14, 28] }, eq: [['bb', 'h1']] },
+  remo_mancuerna: { anc: ['an1', 88, 160], base: { t: 100, F1: [0, 70], F2: [-26, 48], H2: [4, 42] }, A: { H1: [0, 50] }, B: { H1: [-18, 22] },
+    eq: [...BENCH(55, 165, 144), ['db', 'h1']] },
+  remo_maquina: { anc: ['hip', 90, 124], base: { ...SIT, t: 185 }, A: { H1: [48, 4] }, B: { H1: [2, 14] },
+    eq: [...SEAT(70, 118, 131), ['ln', 113, 74, 113, 104, 8], ['ln', 158, 40, 158, 164, 5], ['grip', 'h1']] },
+  pullover_polea: { base: { t: 155, F1: [6, 75] }, A: { H1: [28, -42] }, B: { H1: [12, 48] }, eq: [['cab', 192, 10, 'h1'], ['grip', 'h1']] },
+  remo_invertido: { anc: ['h1', 150, 90], fl: ['an1'], base: { ft1: 198 }, A: { t: 108, F1: [-71, 23], H1: [0, -50] }, B: { t: 123, F1: [-63, 41], H1: [6, -16] },
+    eq: [['ln', 150, 94, 150, 180, 4], ['pad', [150, 90], 0, 0, 4]] },
+  remo_toalla: { A: { t: 200, F1: [26, 70], H1: [50, -4] }, B: { t: 188, F1: [10, 74], H1: [12, 12] },
+    eq: [['ln', 184, 15, 184, 164, 5], ['rope', 'h1', [184, 80]]] },
+
+  // ---------- HOMBROS ----------
+  press_militar_manc: { anc: ['hip', 95, 124], base: SIT, A: { H1: [2, -50] }, B: { H1: [8, -4] }, eq: [BACKREST(), ...SEAT(75, 115, 131), ['db', 'h1']] },
+  press_hombro_maq: { anc: ['hip', 95, 124], base: SIT, A: { H1: [2, -50] }, B: { H1: [10, -2] }, eq: [BACKREST(), ...SEAT(75, 115, 131), ['ln', 150, 10, 150, 164, 5], ['grip', 'h1']] },
+  elev_lat: { v: 'f', anc: ['an1', 111, 160], base: { t: 180, F1: [4, 75] }, A: { H1: [10, 50] }, B: { H1: [50, -4] }, eq: [['db', 'h1'], ['db', 'h2']] },
+  elev_lat_polea: { v: 'f', anc: ['an1', 111, 160], base: { t: 180, F1: [4, 75], H2: [10, 50] }, A: { H1: [-8, 48] }, B: { H1: [50, -4] }, eq: [['cab', 30, 158, 'h1'], ['grip', 'h1']] },
+  face_pull: { base: { t: 175, F1: [-4, 75], F2: [-20, 72] }, A: { H1: [48, -12] }, B: { H1: [10, -26] }, eq: [['cab', 192, 40, 'h1'], ['grip', 'h1']] },
+  pajaros: { v: 'f', tl: 24, anc: ['an1', 111, 160], base: { t: 180, F1: [4, 74] }, A: { H1: [6, 48] }, B: { H1: [48, 6] }, eq: [['db', 'h1'], ['db', 'h2']] },
+
+  // ---------- BÍCEPS ----------
+  curl_barra: { base: STAND, A: { H1: [8, 50] }, B: { H1: [14, 4] }, eq: [['bb', 'h1']] },
+  curl_martillo: { base: STAND, A: { H1: [8, 50] }, B: { H1: [14, 4] }, eq: [['db', 'h1']] },
+  curl_inclinado: { anc: ['hip', 100, 124], base: { ...SIT, t: 215 }, A: { H1: [-2, 51] }, B: { H1: [10, 4] },
+    eq: [['seg', 'hip', 'sh', -5.7, 4, 8, 6], ...SEAT(95, 135, 131), ['db', 'h1']] },
+  curl_bayesian: { base: { t: 180, F1: [-12, 74], F2: [16, 73] }, A: { H1: [-18, 49] }, B: { H1: [3, 4] }, eq: [['cab', 15, 150, 'h1'], ['grip', 'h1']] },
+  curl_predicador: { anc: ['hip', 85, 125], base: { t: 170, F1: [34, 40] }, A: { H1: [33, 40] }, B: { H1: [22, -4] },
+    eq: [['ln', 97, 92, 118, 116, 8], ['ln', 112, 118, 112, 164, 4], ...SEAT(65, 100, 131), ['bb', 'h1']] },
+  curl_toalla: { base: STAND, A: { H1: [12, 10] }, B: { H1: [10, 6] }, eq: [['rope', 'h1', 'toe1']] },
+
+  // ---------- TRÍCEPS ----------
+  ext_tricep_cabeza: { anc: ['hip', 95, 124], base: SIT, A: { H1: [-4, -4] }, B: { H1: [6, -51] }, eq: [BACKREST(), ...SEAT(75, 115, 131), ['db', 'h1']] },
+  ext_tricep_polea_alta: { base: { t: 155, F1: [10, 74], F2: [-14, 74] }, A: { H1: [-2, -4] }, B: { H1: [26, -45] }, eq: [['cab', 30, 60, 'h1'], ['grip', 'h1']] },
+  jalon_triceps: { base: { t: 174, F1: [0, 75] }, A: { H1: [10, 4] }, B: { H1: [8, 51] }, eq: [['cab', 135, 8, 'h1'], ['grip', 'h1']] },
+  fondos_banco: { anc: ['h1', 90, 112], fl: ['an1'], base: { t: 180, ft1: 160 }, A: { H1: [-10, 50], F1: [70, 54] }, B: { H1: [-14, 22], F1: [66, 26] },
+    eq: [['ln', 35, 114, 92, 114, 8], ['ln', 43, 114, 43, 175, 4]] },
+  flexiones_diamante: { ...PUSHUP },
+
+  // ---------- CUÁDRICEPS ----------
+  sentadilla: { A: { t: 180, F1: [0, 75], H1: [-10, 8] }, B: { t: 138, F1: [19, 35], H1: [-10, 8] }, eq: [['bbk', 'sh', -13, 2]] },
+  sentadilla_goblet: { A: { t: 180, F1: [0, 75], H1: [12, 14] }, B: { t: 150, F1: [19, 35], H1: [14, 16] }, eq: [['db', 'h1']] },
+  sentadilla_corporal: { A: { t: 180, F1: [0, 75], H1: [4, 51] }, B: { t: 145, F1: [19, 35], H1: [50, 4] } },
+  sentadilla_hack: { anc: ['an1', 110, 160], base: { t: 200, H1: [4, -8] }, A: { F1: [26, 70] }, B: { F1: [42, 22] },
+    eq: [['seg', 'hip', 'sh', -7, -3, 9, 14], ['pad', 'sh', -2, -6, 5], ['grip', 'h1']] },
+  prensa: { anc: ['hip', 70, 130], fl: 150, base: { t: 240, H1: [20, 22], ft1: 225 }, A: { F1: [53, -53] }, B: { F1: [32, -32] },
+    eq: [['seg', 'hip', 'sh', -3.5, 6, 9, 8], ['ln', 55, 138, 85, 138, 8], ['ln', 70, 140, 70, 150, 5], ['seg', 'an1', 'toe1', 0, 0, 6, 10]] },
+  bulgara: { anc: ['an1', 115, 160], base: { ft2: -90, H1: [4, 51] }, A: { t: 180, F1: [10, 74], F2: [-65, 31] }, B: { t: 168, F1: [22, 48], F2: [-53, 6] },
+    eq: [...BENCH(22, 66, 126), ['db', 'h1']] },
+  zancadas: { anc: ['an1', 130, 160], base: { ft2: 30, H1: [4, 51] }, A: { t: 180, F1: [26, 72], F2: [-38, 58] }, B: { t: 178, F1: [30, 42], F2: [-40, 32] },
+    eq: [['db', 'h1']] },
+  step_up: { anc: ['an1', 128, 124], fl: 164, base: { H1: [4, 51] }, A: { t: 172, F1: [28, 34], F2: [-5, 70] }, B: { t: 180, F1: [3, 72], F2: [-6, 60] },
+    eq: [['box', 112, 127, 55, 37]] },
+  ext_cuadriceps: { anc: ['hip', 85, 120], base: { t: 192, H1: [10, 20] }, A: { F1: [38, 37] }, B: { F1: [74, -8] },
+    eq: [BACKREST(), ['ln', 70, 128, 125, 128, 8], ['ln', 110, 128, 110, 164, 4], ['pad', 'an1', 5, -5, 6]] },
+
+  // ---------- FEMORAL ----------
+  peso_muerto_rumano: { A: { t: 180, F1: [0, 75], H1: [4, 51] }, B: { t: 105, F1: [16, 73], H1: [0, 51] }, eq: [['bb', 'h1']] },
+  curl_femoral_sentado: { anc: ['hip', 85, 120], base: { t: 188, H1: [10, 20] }, A: { F1: [74, -4] }, B: { F1: [25, 35] },
+    eq: [BACKREST(), ['ln', 70, 128, 125, 128, 8], ['ln', 100, 128, 100, 164, 4], ['ln', 105, 108, 128, 108, 7], ['pad', 'an1', -2, 6, 6]] },
+  curl_femoral_acostado: { anc: ['hip', 80, 110], base: { t: 90, hd: 90, H1: [24, 38] }, A: { F1: [-75, 2] }, B: { F1: [-25, -35] },
+    eq: [...BENCH(30, 150, 118), ['pad', 'an1', 2, -7, 6]] },
+  curl_nordico: { anc: ['k1', 80, 155], fl: 161, base: { ...KNEEL }, A: { t: 180, H1: [10, 14] }, B: { t: 128, F1: [-66, 24], H1: [24, 36] },
+    eq: [['pad', 'an1', 0, -7, 5]] },
+
+  // ---------- GLÚTEOS ----------
+  hip_thrust: { anc: ['sh', 60, 110], fl: ['an1'], base: { H1: [-30, 8], eb: -1 }, A: { t: 235, F1: [35, 20] }, B: { t: 270, F1: [29, 48] },
+    eq: [...BENCH(15, 64, 116), ['bb', 'hip', 0, -9]] },
+  puente_gluteo: { anc: ['sh', 55, 150], fl: ['an1'], base: { H1: [50, 4] }, A: { t: 270, F1: [37, 6] }, B: { t: 304, F1: [45, 32] } },
+  puente_una_pierna: { anc: ['sh', 55, 150], fl: ['an1'], base: { H1: [50, 4] }, A: { t: 270, F1: [37, 6], F2: [55, -45] }, B: { t: 304, F1: [45, 32], F2: [60, -40] } },
+  abduccion_maq: { v: 'f', anc: ['hip', 100, 118], fl: ['an1'], base: { t: 180, H1: [14, 40] }, A: { F1: [4, 46] }, B: { F1: [26, 44] },
+    eq: [['ln', 75, 124, 125, 124, 7], ['pad', 'k1', 6, 0, 5], ['pad', 'k2', -6, 0, 5]] },
+  patada_gluteo: { anc: ['an2', 100, 160], base: { t: 160, F2: [0, 75], H1: [42, 18] }, A: { F1: [4, 72] }, B: { F1: [-60, 30] },
+    eq: [['cab', 20, 158, 'an1'], ['ln', 152, 40, 152, 164, 5], ['grip', 'h1']] },
+
+  // ---------- PANTORRILLA ----------
+  gemelo_pie: { anc: ['toe1', 115, 150], fl: 164, base: { t: 180, F1: [0, 75], H1: [4, 51] }, A: { ft1: 110 }, B: { ft1: 55 },
+    eq: [['box', 105, 152, 55, 12], ['db', 'h1']] },
+  gemelo_prensa: { anc: ['hip', 70, 130], fl: 150, base: { t: 240, H1: [20, 22], F1: [53, -53] }, A: { ft1: 240 }, B: { ft1: 200 },
+    eq: [['seg', 'hip', 'sh', -3.5, 6, 9, 8], ['ln', 55, 138, 85, 138, 8], ['ln', 70, 140, 70, 150, 5], ['seg', 'an1', 'toe1', 0, 0, 6, 10]] },
+
+  // ---------- ABDOMEN ----------
+  crunch_polea: { anc: ['k1', 100, 158], fl: 164, base: { ...KNEEL }, A: { t: 170, H1: [6, -12] }, B: { t: 100, H1: [14, 0] }, eq: [['cab', 150, 5, 'h1'], ['grip', 'h1']] },
+  plancha: { anc: ['an1', 30, 152], fl: ['h1'], base: { ft1: 15, H1: [24, 27] }, A: { t: 102, F1: [-73, 16] }, B: { t: 100, F1: [-74, 13] }, dur: 4000 },
+  crunch: { anc: ['hip', 100, 154], fl: 161, base: { F1: [40, 4] }, A: { t: 270, H1: [-10, -6] }, B: { t: 240, H1: [-10, -10] } },
+  elev_piernas: { anc: ['h1', 100, 22], fl: 0, base: { t: 180, H1: [2, -51] }, A: { F1: [2, 75] }, B: { F1: [72, -6] }, eq: [['ln', 60, 22, 150, 22, 5]] },
+  rueda: { anc: ['k1', 60, 155], fl: 162, base: { ft1: -100 }, A: { t: 120, F1: [-42, 36], H1: [5, 53] }, B: { t: 100, F1: [-66, 24], H1: [46, 26] }, eq: [['wheel', 'h1', 0, 4]] },
+};
+
+const N={sentadilla:'Sentadilla con barra',press_banca:'Press de banca',curl_barra:'Curl con barra',elev_lat:'Elevaciones laterales',peso_muerto_rumano:'Peso muerto rumano',jalon_pecho:'Jalón al pecho'};document.getElementById('g').innerHTML=['sentadilla','press_banca','curl_barra','elev_lat','peso_muerto_rumano','jalon_pecho'].map(i=>'<div class="c"><b>'+N[i]+'</b><div class="a" id="a_'+i+'"></div></div>').join('');
+['sentadilla','press_banca','curl_barra','elev_lat','peso_muerto_rumano','jalon_pecho'].forEach(i=>playAnim(document.getElementById('a_'+i),i));
+</script></body></html>

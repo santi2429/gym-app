@@ -201,9 +201,10 @@ SCREENS.dia = {
 function exerciseInfo(id) {
   const x = EXD[id];
   sheet(`<h2>${esc(x.n)}</h2><p class="mu" style="margin-bottom:8px">${GROUP_NAMES[x.g]} · ${x.k === 'c' ? 'Compuesto' : 'Aislamiento'}</p>
+    <div class="card" id="anim" style="height:210px;padding:6px;margin-bottom:10px"></div>
     <div class="card soft" style="margin-bottom:10px"><div class="mu sm" style="color:var(--ac-text)"><i class="ti ti-flask"></i> Por qué está en tu rutina</div><div style="margin-top:3px">${esc(x.y)}</div></div>
     <div class="b">Cómo hacerlo</div><ol class="steps">${x.p.map(s => `<li>${esc(s)}</li>`).join('')}</ol>
-    <a class="btn out blk" style="margin-top:14px;text-decoration:none" target="_blank" rel="noopener" href="https://www.youtube.com/results?search_query=${encodeURIComponent(x.n + ' técnica correcta')}"><i class="ti ti-brand-youtube"></i> Ver video de técnica</a>`);
+    <a class="btn ghost blk sm mu" style="margin-top:10px;text-decoration:none" target="_blank" rel="noopener" href="https://www.youtube.com/results?search_query=${encodeURIComponent(x.n + ' técnica correcta')}"><i class="ti ti-brand-youtube"></i> Ver un video en YouTube</a>`, el => playAnim($('#anim', el), id));
 }
 function downloadICS(p) {
   const [hh, mm] = p.settings.remindTime.split(':');
